@@ -1,0 +1,7 @@
+.idea
+# pycache
+**/__pycache__/
+outputs/*
+*.usd
+*.usda
+*.egg-info

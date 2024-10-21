@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dp"
+version = "0.1.0"
+description = "The differentiable physics library."
+authors = [
+    { name = "Aleš Kučera", email = "kuceral4@fel.cvut.cz" }
+]
+readme = "README.md"
+
+[project.scripts]
+dp-carter = "dp:carter"
+dp-carter-optim = "dp:carter_optim"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,78 @@
+name: "carter"
+
+position: 
+  x: 0.0
+  y: 0.35
+  z: 0.0
+rotation:
+  roll: -90.0
+  pitch: 0.0
+  yaw: 0.0
+
+# https://nvidia.github.io/warp/modules/sim.html#warp.sim.parse_urdf
+parse_urdf_args:
+  urdf_filename: ${eval:'os.path.join(dp_utils.DATA_DIR, "robot", "carter", "urdf", "carter.urdf")'}
+  builder: null
+  xform: null
+  floating: true
+  base_joint: null
+  density: 1000.0
+  stiffness: 2000.0
+  damping: 1000.0
+  armature: 0.0
+  contact_ke: 1e2
+  contact_kd: 1e2
+  contact_kf: 1e2
+  contact_ka: 0.0
+  contact_mu: 0.25
+  contact_restitution: 0.5
+  contact_thickness: 0.1
+  limit_ke: 100.0
+  limit_kd: 10.0
+  joint_limit_lower: 1e-6
+  joint_limit_upper: 1e6
+  scale: 1.0
+  parse_visuals_as_colliders: false
+  force_show_colliders: false
+  enable_self_collisions: false
+  ignore_inertial_definitions: true
+  ensure_nonstatic_links: true
+  static_link_mass: 1e-2
+  collapse_fixed_joints: false
+
+# ========== JOINTS ==========
+
+# https://nvidia.github.io/warp/modules/sim.html#warp.sim.Model.joint_q
+# https://nvidia.github.io/warp/modules/sim.html#joint-control-modes
+joints:
+  - name: "left_wheel"
+    q: 0.0
+    qd: 0.0
+    act: 0.0
+    target_ke: 1e2
+    target_kd: 1e2
+    axis_mode: ${eval:'warp.sim.JOINT_MODE_TARGET_VELOCITY'}
+  
+  - name: "right_wheel"
+    q: 0.0
+    qd: 0.0
+    act: 0.0
+    target_ke: 1e1
+    target_kd: 1e2
+    axis_mode: ${eval:'warp.sim.JOINT_MODE_TARGET_VELOCITY'}
+
+  - name: "rear_pivot"
+    q: 0.0
+    qd: 0.0
+    act: 0.0
+    target_ke: 0.0
+    target_kd: 0.0
+    axis_mode: ${eval:'warp.sim.JOINT_MODE_FORCE'}
+  
+  - name: "rear_axle"
+    q: 0.0
+    qd: 0.0
+    act: 0.0
+    target_ke: 0.0
+    target_kd: 0.0
+    axis_mode: ${eval:'warp.sim.JOINT_MODE_FORCE'}
