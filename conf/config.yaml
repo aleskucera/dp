@@ -4,12 +4,4 @@ defaults:
   - robot: carter
 
 experiment: "optimization"
-stage_path: "carter.usd"
-
-side_1: 5
-
-side_2: 6
-
-neco: ${side_1}
-
-rectangle_area: ${eval:'${side_1} * ${side_2}'}
+stage_path: "data/output/carter.usd"

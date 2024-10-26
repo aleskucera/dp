@@ -96,10 +96,10 @@ class CarterDemo:
         self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
-                self.simulate(self.get_control())
+                control = self.get_control()
+                self.simulate(control)
             self.graph = capture.graph
 
-    @nvtx.annotate()
     def simulate(self, control=None):
         for _ in range(self.sim_substeps):
             self.state_0.clear_forces()
@@ -113,17 +113,17 @@ class CarterDemo:
         control = self.model.control()
         control.joint_act = get_joint_act(
             joints=[self.left_wheel_joint, self.right_wheel_joint],
-            values=[1.0, 1.0],
+            values=[0.0, 0.0],
             model=self.model,
         )
         return control
 
     def step(self):
-        with wp.ScopedTimer("step", dict=self.profiler, print=False, use_nvtx=True, detailed=True):
-            control = self.get_control()
+        with wp.ScopedTimer("step", dict=self.profiler, print=True):
             if self.use_cuda_graph:
                 wp.capture_launch(self.graph)
             else:
+                control = self.get_control()
                 self.simulate(control)
         self.sim_time += self.frame_dt
 
@@ -145,10 +145,10 @@ def carter_demo(cfg: DictConfig):
     demo = CarterDemo(cfg)
     for _ in range(cfg.sim.num_frames):
         demo.step()
-        # demo.render()
+        demo.render()
 
-    # if demo.renderer:
-    #     demo.renderer.save()
+    if demo.renderer:
+        demo.renderer.save()
 
 
 if __name__ == "__main__":

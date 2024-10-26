@@ -22,7 +22,7 @@ parse_urdf_args:
   armature: 0.0
   contact_ke: 1e2
   contact_kd: 1e2
-  contact_kf: 1e2
+  contact_kf: 1e4
   contact_ka: 0.0
   contact_mu: 0.25
   contact_restitution: 0.5
@@ -57,7 +57,7 @@ joints:
     q: 0.0
     qd: 0.0
     act: 0.0
-    target_ke: 1e1
+    target_ke: 1e2
     target_kd: 1e2
     axis_mode: ${eval:'warp.sim.JOINT_MODE_TARGET_VELOCITY'}
 

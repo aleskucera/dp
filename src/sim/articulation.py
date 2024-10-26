@@ -5,6 +5,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+import nvtx
 import warp as wp
 
 from .utils import quat_decompose, quat_twist
@@ -475,6 +476,7 @@ def eval_articulation_fk(
 
 
 # updates state body information based on joint coordinates
+@nvtx.annotate()
 def eval_fk(model, joint_q, joint_qd, mask, state):
     """
     Evaluates the model's forward kinematics given the joint coordinates and updates the state's body information (:attr:`State.body_q` and :attr:`State.body_qd`).

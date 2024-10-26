@@ -62,7 +62,6 @@ def set_joint_q(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_joint_q_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.float32),
@@ -97,7 +96,6 @@ def set_joint_qd(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_joint_qd_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.float32),
@@ -132,7 +130,6 @@ def set_joint_axis_mode(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_joint_axis_mode_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.int32),
@@ -167,7 +164,6 @@ def set_linear_compliance(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_linear_compliance_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.float32),
@@ -202,7 +198,6 @@ def set_angular_compliance(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_angular_compliance_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.float32),
@@ -237,7 +232,6 @@ def set_joint_target_ke(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_joint_target_ke_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.float32),
@@ -272,7 +266,6 @@ def set_joint_target_kd(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_joint_target_kd_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.float32),
@@ -282,7 +275,7 @@ def set_joint_target_kd_kernel(
     joint = joints[tid]
     joint_target_kd[joint.axis_idx] = values[tid]
 
-@nvtx.annotate()
+
 def get_joint_act(
     joints: List[JointInfo],
     values: List[float],

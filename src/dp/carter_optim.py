@@ -4,6 +4,7 @@ import os
 import math
 from typing import Tuple, Dict, Any
 
+import nvtx
 import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -14,7 +15,7 @@ import warp.sim.render
 import matplotlib.pyplot as plt
 
 from dp_utils import *
-
+from sim import *
 
 @wp.kernel
 def loss_kernel(traj: wp.array(dtype=wp.transform), 
@@ -28,21 +29,13 @@ def loss_kernel(traj: wp.array(dtype=wp.transform),
     wp.atomic_add(loss, 0, l)
 
 @wp.kernel
-def update_ke_kernel(joint: JointInfo, 
-                     joint_ke: wp.array(dtype=wp.float32), 
-                     joint_ke_grad: wp.array(dtype=wp.float32), 
-                     learning_rate: wp.float32):
-    idx = joint.axis_idx
-    joint_ke[idx] = joint_ke[idx] - learning_rate * joint_ke_grad[idx]
-
-@wp.kernel
 def update_joint_act(step: wp.int32,
                    joints: wp.array(dtype=JointInfo),
                    control: wp.array(dtype=wp.float32), 
                    joint_act: wp.array(dtype=wp.float32)):
     tid = wp.tid()
     joint = joints[tid]
-    joint_act[joint.axis_idx] = control[step]
+    joint_act[joint.axis_idx] = control[0]
 
 @wp.kernel
 def update_control(control_grad: wp.array(dtype=wp.float32),
@@ -55,6 +48,12 @@ def update_control(control_grad: wp.array(dtype=wp.float32),
         control_grad[tid] = wp.clamp(control_grad[tid], -0.2, 0.2)
         control[tid] = control[tid] - learning_rate * control_grad[tid]
 
+
+@wp.kernel
+def compute_sin(delta_t: float, out: wp.array(dtype=wp.float32)):
+    tid = wp.tid()
+    t = 2.0 * float(tid) * delta_t
+    out[tid] = 5.0 * wp.sin(t)
 
 def set_joint_config(cfg: DictConfig, model: Union[wp.sim.Model, wp.sim.ModelBuilder]):
     q_list = []
@@ -117,8 +116,8 @@ class CarterOptim:
         self.sim_substeps = cfg.sim.sim_substeps
         self.sim_duration = cfg.sim.sim_duration
 
-        self.frame_steps = int(self.sim_duration / self.frame_dt)
-        self.sim_steps   = self.frame_steps * self.sim_substeps
+        # self.frame_steps = int(self.sim_duration / self.frame_dt)
+        self.sim_steps   = cfg.sim.num_frames * self.sim_substeps
 
         self.iter          = 0
         self.sim_time      = 0.0
@@ -131,13 +130,14 @@ class CarterOptim:
         self.model = carter_world_model(cfg)
         self.init_state = self.model.state()
 
-        wp.sim.eval_fk(
-            self.model, 
-            self.model.joint_q, 
-            self.model.joint_qd, 
-            None, 
-            self.init_state
-        )
+        with wp.ScopedTimer("eval_fk", use_nvtx=True, color="yellow", print=True):
+            eval_fk(
+                self.model, 
+                self.model.joint_q, 
+                self.model.joint_qd, 
+                None, 
+                self.init_state
+            )
 
         # Create the integrator
         self.integrator = wp.sim.FeatherstoneIntegrator(self.model)
@@ -149,7 +149,9 @@ class CarterOptim:
 
         self.left_wheel_joint:  JointInfo = create_joint_info("left_wheel", self.model)
         self.right_wheel_joint: JointInfo = create_joint_info("right_wheel", self.model)
-        self.joints = wp.array([self.left_wheel_joint, self.right_wheel_joint], dtype=JointInfo)
+        # self.joints = wp.array([self.left_wheel_joint, self.right_wheel_joint], dtype=JointInfo)
+        self.joints = wp.array([self.right_wheel_joint], dtype=JointInfo)
+        # self.joints = wp.array([self.left_wheel_joint], dtype=JointInfo)
 
         # ======================== BODIES ========================
 
@@ -167,50 +169,64 @@ class CarterOptim:
         self.control    = wp.array(rand_control, dtype=wp.float32, requires_grad=True)
 
         # Initialize target trajectory and control
-        self.target_control    = wp.empty(self.sim_steps, dtype=wp.float32, requires_grad=True)
+        self.target_control    = wp.array([2.0], dtype=wp.float32, requires_grad=True)
         self.target_trajectory = wp.empty(self.sim_steps, dtype=wp.transformf, requires_grad=True)
 
         # Set the target control as a sinusoidal function
-        wp.launch(compute_sin, dim=self.sim_steps, inputs=[self.sim_dt, self.target_control])
+        # wp.launch(compute_sin, dim=self.sim_steps, inputs=[self.sim_dt, self.target_control])
 
         self._reset()
     
     def _reset(self):
+        with wp.ScopedTimer("reset", use_nvtx=True, color="yellow", print=True):
+            # Reset the attributes
+            self.loss       = wp.array([0], dtype=wp.float32, requires_grad=True)
+            self.states     = [self.model.state(requires_grad=True) for _ in range(self.sim_steps + 1)]
+            self.controls   = [self.model.control(clone_variables=True, requires_grad=True) for _ in range(self.sim_steps)]
+            self.trajectory = wp.empty(self.sim_steps, dtype=wp.transformf, requires_grad=True)
 
-        # Reset the attributes
-        self.loss       = wp.array([0], dtype=wp.float32, requires_grad=True)
-        self.states     = [self.model.state(requires_grad=True) for _ in range(self.sim_steps + 1)]
-        self.controls   = [self.model.control(clone_variables=True, requires_grad=True) for _ in range(self.sim_steps)]
-        self.trajectory = wp.empty(self.sim_steps, dtype=wp.transformf, requires_grad=True)
-
-        # Set the state body_q and body_qd by the initial state which was computed by forward kinematics
-        for state in self.states:
-            state.body_q = wp.clone(self.init_state.body_q, requires_grad=True)
-            state.body_qd = wp.clone(self.init_state.body_qd, requires_grad=True)
+            # Set the state body_q and body_qd by the initial state which was computed by forward kinematics
+            for state in self.states:
+                state.body_q = wp.clone(self.init_state.body_q, requires_grad=True)
+                state.body_qd = wp.clone(self.init_state.body_qd, requires_grad=True)
     
     def generate_target_trajectory(self):
-        for i in range(self.sim_steps):
-            self.states[i].clear_forces()
-            wp.sim.collide(self.model, self.states[i])
-            wp.launch(kernel=update_joint_act,
-                      dim=len(self.joints),
-                      inputs=[i, 
-                              self.joints, 
-                              self.target_control, 
-                              self.controls[i].joint_act]
-            )
-            self.integrator.simulate(self.model, 
-                                     self.states[i], 
-                                     self.states[i + 1], 
-                                     self.sim_dt, 
-                                     control=self.controls[i])
-            wp.launch(kernel=update_trajectory, 
-                      dim=1, 
-                      inputs=[self.imu_body, 
-                              self.states[i + 1].body_q, 
-                              i, 
-                              self.target_trajectory]
+        with wp.ScopedTimer("generate_target_trajectory", use_nvtx=True, color="yellow", print=True):
+            for i in range(self.sim_steps):
+                with wp.ScopedTimer("clear_forces", use_nvtx=True, color="yellow", print=False):
+                    self.states[i].clear_forces()
+                with wp.ScopedTimer("collide", use_nvtx=True, color="yellow", print=False):
+                    wp.sim.collide(self.model, self.states[i])
+                with wp.ScopedTimer("launch_update_joint_act", use_nvtx=True, color="yellow", print=False):
+                    wp.launch(update_joint_act,
+                            dim=len(self.joints),
+                            inputs=[i, 
+                                    self.joints, 
+                                    self.target_control, 
+                                    self.controls[i].joint_act]
                     )
+                with wp.ScopedTimer("simulate", use_nvtx=True, color="yellow", print=False):
+                    self.integrator.simulate(self.model, 
+                                            self.states[i], 
+                                            self.states[i + 1], 
+                                            self.sim_dt, 
+                                            control=self.controls[i])
+                with wp.ScopedTimer("launch_update_trajectory", use_nvtx=True, color="yellow", print=False):
+                    wp.launch(update_trajectory, 
+                            dim=1, 
+                            inputs=[self.imu_body, 
+                                    self.states[i + 1].body_q, 
+                                    i, 
+                                    self.target_trajectory]
+                            )
+                    
+                if i % self.cfg.sim.sim_substeps == 0:
+                    with wp.ScopedTimer("render"):
+                        self.renderer.begin_frame(self.sim_time)
+                        self.renderer.render(self.states[i])
+                        self.renderer.end_frame()
+
+                    self.sim_time += self.frame_dt
 
     def forward(self):
         for i in range(self.sim_steps):
@@ -233,6 +249,8 @@ class CarterOptim:
                       inputs=[self.imu_body, 
                               self.states[i + 1].body_q, i, 
                               self.trajectory])
+            
+            wp.tape.backward(grads={self.states[i + 1].body_q: wp.ones((len(self.states[i + 1].body_q), 7), dtype=wp.float32)})
 
         wp.launch(kernel=loss_kernel, 
                   dim=len(self.trajectory), 
@@ -309,6 +327,8 @@ def carter_demo(cfg: DictConfig):
 
     demo = CarterOptim(cfg)
     demo.generate_target_trajectory()
+    demo.renderer.save()
+    exit()
 
     target_control = demo.target_control.numpy()
 
@@ -319,7 +339,8 @@ def carter_demo(cfg: DictConfig):
     # Plot the controls
     time = np.linspace(0, demo.sim_duration, demo.sim_steps)
     for i, control in enumerate(controls):
-        plt.plot(time, control, label=f"Iteration {i}")
+        if i % 10 == 0:
+            plt.plot(time, control, label=f"Iteration {i}")
     plt.plot(time, target_control, label="Target control")
     plt.legend()
     # Save the plot as png
