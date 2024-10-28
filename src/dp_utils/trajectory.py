@@ -1,11 +1,9 @@
 from typing import Union, Tuple
 
 import warp as wp
-from pxr import Gf
 import numpy as np
 import warp.sim.render
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 from scipy.spatial.transform import Rotation as R
 
 @wp.kernel
@@ -191,9 +189,13 @@ def update_plot(ax: plt.Axes,
     ylim = (min(y.min(), limits[1][0]), max(y.max(), limits[1][1]))
     zlim = (min(z.min(), limits[2][0]), max(z.max(), limits[2][1]))
 
+    # print(f"X: {target_trajectory[:, 0].min()} - {target_trajectory[:, 0].max()}")
+    # print(f"Y: {target_trajectory[:, 1].min()} - {target_trajectory[:, 1].max()}")
+    # print(f"Z: {target_trajectory[:, 2].min()} - {target_trajectory[:, 2].max()}")
+
     ax.cla()
-    plot_trajectory(ax, trajectory, color='red', linewidth=2)
-    plot_trajectory(ax, target_trajectory, color='blue', linewidth=2)
+    plot_path(ax, trajectory, color='red', linewidth=2)
+    plot_path(ax, target_trajectory, color='blue', linewidth=2)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
@@ -205,7 +207,7 @@ def update_plot(ax: plt.Axes,
     plt.pause(0.1)  # Pause to allow the plot to refresh
 
 
-def plot_trajectory(ax: plt.Axes, trajectory: np.ndarray, color: str = 'red', linewidth: int = 2):
+def plot_path(ax: plt.Axes, trajectory: np.ndarray, color: str = 'red', linewidth: int = 2):
     """
     Plots a 3D trajectory using Matplotlib.
 
@@ -252,3 +254,40 @@ def add_trajectory_loss(trajectory: wp.array, target_trajectory: wp.array, loss:
     assert loss.shape == (1,), "Loss array should be of size 1."
 
     wp.launch(kernel=_trajectory_loss_kernel, dim=len(trajectory), inputs=[trajectory, target_trajectory, loss])
+
+def plot_time_series(ax: plt.Axes, trajectory: Union[list, np.ndarray, wp.array], axis: str = 'x', color: str = 'red'):
+    """
+    Plots the time series of a trajectory along a specified axis.
+
+    Args:
+        ax (plt.Axes): Matplotlib axes for the time series plot.
+        trajectory (Union[list, np.ndarray, wp.array]): List or array of 3D trajectory points.
+        axis (str): Axis along which to plot the time series ('x', 'y', or 'z'). Defaults to 'x'.
+        color (str): Color for the time series plot. Defaults to 'red'.
+    """
+    if isinstance(trajectory, list):
+        trajectory = np.array(trajectory)        
+    elif isinstance(trajectory, wp.array):
+        trajectory = trajectory.numpy()
+    elif isinstance(trajectory, np.ndarray):
+        pass
+    else:
+        raise ValueError("Trajectory must be a list, numpy array, or warp array.")
+    
+    assert axis in ['x', 'y', 'z'], "Axis must be 'x', 'y', or 'z'."
+    
+    if axis == 'x':
+        data = trajectory[:, 0]
+        label = 'X'
+    elif axis == 'y':
+        data = trajectory[:, 1]
+        label = 'Y'
+    else:
+        data = trajectory[:, 2]
+        label = 'Z'
+    
+    ax.plot(data, color=color, label=label)
+    ax.set_xlabel("Time Step")
+    ax.set_ylabel("Position")
+    ax.set_title(f"{label}-Axis Time Series")
+    ax.legend()

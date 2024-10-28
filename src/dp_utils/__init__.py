@@ -13,4 +13,4 @@ from .joints import (
 from .bodies import BodyInfo, create_body_info, update_trajectory_kernel, get_q
 from .general import custom_eval, get_index_by_value
 from .constants import PROJECT_DIR, CONF_DIR, DATA_DIR, LOG_DIR, SRC_DIR
-from .trajectory import update_trajectory, render_trajectory, add_trajectory_loss, plot_trajectory, create_3d_figure, update_plot
+from .trajectory import update_trajectory, render_trajectory, add_trajectory_loss, plot_path, create_3d_figure, update_plot, plot_time_series

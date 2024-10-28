@@ -3,5 +3,5 @@ frame_dt: ${eval:'1 / ${sim.fps}'} # 1/fps
 sim_substeps: 1
 sim_dt: ${eval:'${sim.frame_dt} / ${sim.sim_substeps}'} # frame_dt / sim_substeps
 
-num_frames: 100
+num_frames: 200
 sim_duration: 2.0

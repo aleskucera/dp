@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - sim: default
-  - robot: carter
+  - robot: pendulum
 
 experiment: "optimization"
 stage_path: "data/output/carter.usd"

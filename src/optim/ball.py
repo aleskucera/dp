@@ -12,6 +12,8 @@ from sim import *
 from dp_utils import *
 
 
+OUTPUT_FILE = "data/output/ball.usd"
+
 @wp.kernel
 def apply_force_kernel(
     particle_f: wp.array(dtype=wp.vec3f),
@@ -59,7 +61,7 @@ class BallOptim:
         # Create the integrator and renderer
         self.integrator = wp.sim.FeatherstoneIntegrator(self.model)
         self.renderer = wp.sim.render.SimRenderer(
-            self.model, "data/output/carter.usd", scaling=1.0
+            self.model, OUTPUT_FILE, scaling=1.0
         )
 
         # ======================== OPTIMIZATION ========================
@@ -99,11 +101,9 @@ class BallOptim:
         self.limits = [self.xlim, self.ylim, self.zlim]
         plt.ion()
 
-
-
     def _reset(self):
         self.sim_time = 0.0
-        self.loss = wp.array([0], dtype=wp.float32, requires_grad=True)
+        self.loss = wp.array([0.0], dtype=wp.float32, requires_grad=True)
 
     def generate_target_trajectory(self):
         for i in range(self.sim_steps):
@@ -145,7 +145,7 @@ class BallOptim:
             if i % 5 == 0:
                 print(f"Iteration {i}, Loss: {loss}")
                 update_plot(self.ax, self.trajectory, self.target_trajectory, self.limits)
-            if i == 249 or i == 0:
+            if i == 249:
                 self.render_trajectory(
                     f"trajectory_{i}",
                     self.trajectory,
@@ -213,10 +213,10 @@ def carter_demo(cfg: DictConfig):
     OmegaConf.register_new_resolver("eval", custom_eval)
     OmegaConf.resolve(cfg)
 
-    demo = BallOptim(cfg)
-    demo.generate_target_trajectory()
-    demo.train()
-    demo.renderer.save()
+    model = BallOptim(cfg)
+    model.generate_target_trajectory()
+    model.train()
+    model.renderer.save()
 
 
 if __name__ == "__main__":

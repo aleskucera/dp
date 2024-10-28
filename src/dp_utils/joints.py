@@ -41,16 +41,15 @@ def create_joint_info(
 def set_joint_q(
     joints: List[JointInfo],
     values: List[float],
-    model: Union[wp.sim.Model, wp.sim.ModelBuilder],
+    model: Union[wp.sim.Model, wp.sim.ModelBuilder, wp.sim.State],
 ):
-    if isinstance(model, wp.sim.Model):
+    if isinstance(model, wp.sim.Model) or isinstance(model, wp.sim.State):
         joint_array = wp.array(joints, dtype=JointInfo)
         value_array = wp.array(values, dtype=wp.float32)
         wp.launch(
             kernel=set_joint_q_kernel,
             dim=len(joints),
-            inputs=[joint_array, value_array, model.joint_q],
-            device=model.device,
+            inputs=[joint_array, value_array, model.joint_q]
         )
     elif isinstance(model, wp.sim.ModelBuilder):
         for joint, value in zip(joints, values):
@@ -75,16 +74,15 @@ def set_joint_q_kernel(
 def set_joint_qd(
     joints: List[JointInfo],
     values: List[float],
-    model: Union[wp.sim.Model, wp.sim.ModelBuilder],
+    model: Union[wp.sim.Model, wp.sim.ModelBuilder, wp.sim.State],
 ):
-    if isinstance(model, wp.sim.Model):
+    if isinstance(model, wp.sim.Model) or isinstance(model, wp.sim.State):
         joint_array = wp.array(joints, dtype=JointInfo)
         value_array = wp.array(values, dtype=wp.float32)
         wp.launch(
             kernel=set_joint_qd_kernel,
             dim=len(joints),
-            inputs=[joint_array, value_array, model.joint_qd],
-            device=model.device,
+            inputs=[joint_array, value_array, model.joint_qd]
         )
     elif isinstance(model, wp.sim.ModelBuilder):
         for joint, value in zip(joints, values):
@@ -316,7 +314,6 @@ def set_joint_act(
 
 
 @wp.kernel
-@nvtx.annotate()
 def set_joint_act_kernel(
     joints: wp.array(dtype=JointInfo),
     values: wp.array(dtype=wp.float32),
