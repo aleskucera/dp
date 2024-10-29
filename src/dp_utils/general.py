@@ -1,7 +1,9 @@
+import math
 from typing import Any, List, Optional, Union
 
 import warp as wp
 import numpy as np
+from omegaconf import DictConfig
 
 
 def custom_eval(input: str):
@@ -47,4 +49,23 @@ def get_index_by_value(
         if target_value in filtered_elements
         else None
     )
+
+def get_robot_transform(cfg: DictConfig) -> wp.transformf:
+    position = wp.vec3(cfg.robot.position.x, cfg.robot.position.y, cfg.robot.position.z)
+    rotation = wp.quat_rpy(
+        math.radians(cfg.robot.rotation.roll),
+        math.radians(cfg.robot.rotation.pitch),
+        math.radians(cfg.robot.rotation.yaw),
+    )
+    return wp.transform(position, rotation)
+
+
+def generate_segments(sim_steps: int, num_segments: int):
+    segment_size = sim_steps // num_segments
+    segments = []
+    for i in range(num_segments):
+        start = i * segment_size
+        end = start + segment_size
+        segments.append({"start": start, "end": end})
+    return segments
 

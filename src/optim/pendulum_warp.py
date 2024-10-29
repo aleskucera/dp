@@ -16,6 +16,7 @@ from dp_utils import *
 
 OUTPUT_FILE = "data/output/pendulum_warp_optim.usd"
 
+
 def set_joint_config(cfg: DictConfig, model: Union[wp.sim.Model, wp.sim.ModelBuilder]):
     q_list = []
     qd_list = []
@@ -38,16 +39,16 @@ def set_joint_config(cfg: DictConfig, model: Union[wp.sim.Model, wp.sim.ModelBui
     set_joint_target_kd(joints=joint_info_list, values=target_kd_list, model=model)
     set_joint_axis_mode(joints=joint_info_list, values=axis_mode_list, model=model)
 
+
 def get_robot_transform(cfg: DictConfig) -> wp.transformf:
-    position = wp.vec3(
-        cfg.robot.position.x, cfg.robot.position.y, cfg.robot.position.z
-    )
+    position = wp.vec3(cfg.robot.position.x, cfg.robot.position.y, cfg.robot.position.z)
     rotation = wp.quat_rpy(
         math.radians(cfg.robot.rotation.roll),
         math.radians(cfg.robot.rotation.pitch),
         math.radians(cfg.robot.rotation.yaw),
     )
     return wp.transform(position, rotation)
+
 
 def pendulum_world_model(cfg: DictConfig) -> wp.sim.Model:
     builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
@@ -57,9 +58,17 @@ def pendulum_world_model(cfg: DictConfig) -> wp.sim.Model:
     parse_urdf_args["builder"] = builder
     wp.sim.parse_urdf(**parse_urdf_args)
     set_joint_config(cfg, builder)
-    builder.add_shape_box(body=-1, pos=wp.vec3(0.0, -0.5, 0.0), 
-                          hx=1.0, hy=0.25, hz=1.0, 
-                          ke=1e4, kf=0.0, kd=1e1, mu=0.2)
+    builder.add_shape_box(
+        body=-1,
+        pos=wp.vec3(0.0, -0.5, 0.0),
+        hx=1.0,
+        hy=0.25,
+        hz=1.0,
+        ke=1e4,
+        kf=0.0,
+        kd=1e1,
+        mu=0.2,
+    )
     model = builder.finalize()
     model.ground = True
 
@@ -89,11 +98,8 @@ class PendulumOptim:
         self.init_state = self.model.state()
 
         # Create the integrator and renderer
-        self.integrator = wp.sim.FeatherstoneIntegrator(self.model)
-        self.renderer = wp.sim.render.SimRenderer(
-            self.model, OUTPUT_FILE, scaling=1.0
-        )
-
+        self.integrator = FeatherstoneIntegrator(self.model)
+        self.renderer = wp.sim.render.SimRenderer(self.model, OUTPUT_FILE, scaling=1.0)
 
         self.sphere_body: BodyInfo = create_body_info("pendulum_end", self.model)
 
@@ -136,6 +142,7 @@ class PendulumOptim:
 
             self.renderer.end_frame()
 
+
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def carter_demo(cfg: DictConfig):
     OmegaConf.register_new_resolver("eval", custom_eval)
@@ -144,7 +151,7 @@ def carter_demo(cfg: DictConfig):
     model = PendulumOptim(cfg)
     model.generate_target_trajectory()
     model.renderer.save()
-    plot_time_series(ax=model.ax, trajectory=model.trajectory, axis='z')
+    plot_time_series(ax=model.ax, trajectory=model.trajectory, axis="z")
     plt.show()
 
 

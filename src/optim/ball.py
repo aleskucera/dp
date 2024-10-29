@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from sim import *
 from dp_utils import *
 
+from optim.loss import add_trajectory_loss
+
 
 OUTPUT_FILE = "data/output/ball.usd"
 
@@ -48,6 +50,7 @@ class BallOptim:
         self.sim_duration = cfg.sim.sim_duration
         self.sim_steps = cfg.sim.num_frames * cfg.sim.sim_substeps
 
+        self.time = np.linspace(0, self.sim_duration, self.sim_steps)
         self.iter = 0
         self.profiler = {}
         self.sim_time = 0.0
@@ -60,9 +63,7 @@ class BallOptim:
 
         # Create the integrator and renderer
         self.integrator = wp.sim.FeatherstoneIntegrator(self.model)
-        self.renderer = wp.sim.render.SimRenderer(
-            self.model, OUTPUT_FILE, scaling=1.0
-        )
+        self.renderer = Renderer(self.model, self.time, OUTPUT_FILE)
 
         # ======================== OPTIMIZATION ========================
 
@@ -77,29 +78,34 @@ class BallOptim:
 
         random_force = np.random.uniform(-1, 1, size=(self.sim_steps, 3))
         self.force = wp.array(random_force, dtype=wp.vec3f, requires_grad=True)
-        self.trajectory = wp.empty(self.sim_steps, dtype=wp.vec3f, requires_grad=True)
 
         t = np.linspace(0, self.sim_duration, self.sim_steps)
         x = np.full_like(t, 0.5)
         y = 2 * np.sin(1.5 * np.pi * t)
         z = np.zeros_like(t)
         self.target_force = wp.array(np.vstack([x, y, z]).T, dtype=wp.vec3f)
-        self.target_trajectory = wp.empty(
-            self.sim_steps, dtype=wp.vec3f, requires_grad=True
-        )
+
+        self.trajectory = Trajectory(name="trajectory",
+                                     time=self.time,
+                                     requires_grad=True,
+                                     color=(1.0, 0.0, 0.0))
+        
+        self.target_trajectory = Trajectory(name="target_trajectory",
+                                            time=self.time,
+                                            color=(0.0, 1.0, 0.0))
 
         self.optimizer = wp.optim.Adam(
             [self.force],
             lr=self.learning_rate,
         )
 
-        self.fig, self.ax = create_3d_figure()
-        padding = 0.1
-        self.xlim = (-0.5 - padding, 0.18 + padding)
-        self.ylim = (2.0 - padding, 2.57 + padding)
-        self.zlim = (0.0 - padding, 0.0 + padding)
-        self.limits = [self.xlim, self.ylim, self.zlim]
-        plt.ion()
+        self.plot3d = Plot3D(xlim=(-0.5, 0.18), 
+                           ylim=(2.0, 2.57), 
+                           zlim=(0.0, 0.0), 
+                           padding=0.1)
+        
+        # self.plot2d = Plot2D(subplots=("x", "y", "z"))
+                             
 
     def _reset(self):
         self.sim_time = 0.0
@@ -119,11 +125,10 @@ class BallOptim:
             self.integrator.simulate(
                 self.model, self.states[i], self.states[i + 1], self.frame_dt
             )
-            update_trajectory(self.target_trajectory, self.states[i].particle_q, i, 0)
+            self.target_trajectory.update_position(i, self.states[i].particle_q, 0)
 
-            if i % self.cfg.sim.sim_substeps == 0:
-                self.sim_time += self.frame_dt
-                self.render(i)
+        self.plot3d.add_trajectory(self.target_trajectory)
+        self.renderer.add_trajectory(self.target_trajectory)
 
     def simulate(self):
         for i in range(self.sim_steps):
@@ -134,25 +139,18 @@ class BallOptim:
                 inputs=[self.states[i].particle_f, self.force, i],
             )
             wp.sim.collide(self.model, self.states[i])
-            self.integrator.simulate(
-                self.model, self.states[i], self.states[i + 1], self.frame_dt
-            )
-            update_trajectory(self.trajectory, self.states[i].particle_q, i, 0)
+            self.integrator.simulate(self.model, self.states[i], self.states[i + 1], self.frame_dt)
+            self.trajectory.update_position(i, self.states[i].particle_q, 0)
 
     def train(self):
         for i in range(300):
             loss = self.step()
             if i % 5 == 0:
                 print(f"Iteration {i}, Loss: {loss}")
-                update_plot(self.ax, self.trajectory, self.target_trajectory, self.limits)
+                self.plot3d.add_trajectory(self.trajectory, i)
+
             if i == 249:
-                self.render_trajectory(
-                    f"trajectory_{i}",
-                    self.trajectory,
-                    radius=0.01,
-                    color=(0.0, 1.0, 0.0),
-                    time_offset=0,
-                )
+                self.renderer.add_trajectory(self.trajectory)
 
     def step(self):
         self.tape = wp.Tape()
@@ -165,47 +163,9 @@ class BallOptim:
         self.tape.zero()
 
         return self.loss.numpy()[0]
-
-    def render_trajectory(
-        self,
-        name: str,
-        trajectory: wp.array,
-        radius: float = 0.1,
-        color: tuple = (1.0, 0.0, 0.0),
-        time_offset: int = 0,
-    ):
-        t = 0.0
-        trajectory = trajectory.numpy()
-        for i in range(2, self.num_frames):
-            traj = trajectory[:i]
-            self.renderer.begin_frame(time_offset + t)
-            render_trajectory(
-                name=name,
-                trajectory=traj,
-                renderer=self.renderer,
-                radius=radius,
-                color=color,
-            )
-            self.renderer.end_frame()
-            t += self.frame_dt
-
-    def render(self, step: int):
-        if self.renderer is None:
-            return
-
-        with wp.ScopedTimer("render"):
-            self.renderer.begin_frame(self.sim_time)
-            self.renderer.render(self.states[step])
-
-            if step > 2:
-                render_trajectory(
-                    name="trajectory",
-                    trajectory=self.target_trajectory,
-                    renderer=self.renderer,
-                    radius=0.01,
-                )
-
-            self.renderer.end_frame()
+    
+    def render_usd(self):
+        self.renderer.render(self.states)
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
@@ -216,7 +176,9 @@ def carter_demo(cfg: DictConfig):
     model = BallOptim(cfg)
     model.generate_target_trajectory()
     model.train()
-    model.renderer.save()
+    model.render_usd()
+    model.plot3d.animate(num_frames=300, interval=100, save_path="data/output/ball_trajectory.mp4")
+    # model.plot2d.animate(num_frames=300, interval=100, save_path="data/output/ball_trajectory_2d.mp4")
 
 
 if __name__ == "__main__":

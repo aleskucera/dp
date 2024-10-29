@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Union, Tuple
 
 import warp as wp
@@ -5,6 +6,58 @@ import numpy as np
 import warp.sim.render
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
+
+
+class Trajectory:
+    def __init__(self, name: str, 
+                 time: np.ndarray,
+                 data: wp.array = None,
+                 requires_grad: bool = False,
+                 plot_linewidth: int = 2,
+                 render_radius: float = 0.01,
+                 color: Tuple[float, float, float] = (1.0, 0.0, 0.0)):
+        
+        assert len(time) >= 2, "Time array must have at least two elements."
+        if data is not None:
+            assert len(data) == len(time), "Data and time arrays must have the same length."
+        
+        self.name = name
+        self.time = time
+
+        self.data = wp.empty(len(time), dtype=wp.vec3, requires_grad=requires_grad) if data is None else data
+
+        self.color = color
+        self.render_radius = render_radius
+        self.plot_linewidth = plot_linewidth
+
+    def __len__(self):
+        return len(self.time)
+    
+    @property
+    def grad(self):
+        if self.data.requires_grad:
+            return self.data.grad
+    
+    @property
+    def x(self):
+        return self.data.numpy()[:, 0]
+    
+    @property
+    def y(self):
+        return self.data.numpy()[:, 1]
+    
+    @property
+    def z(self):
+        return self.data.numpy()[:, 2]
+    
+    def update_position(self, time_step: int, q: wp.array, q_idx: int):
+        assert q.dtype == wp.vec3 or q.dtype == wp.transform, "Q must be of type wp.vec3 or wp.transform."
+
+        if q.dtype == wp.vec3:
+            wp.launch(kernel=_update_trajectory_kernel_vec3, dim=1, inputs=[self.data, q, time_step, q_idx])
+        else:
+            wp.launch(kernel=_update_trajectory_kernel_transform, dim=1, inputs=[self.data, q, time_step, q_idx])
+
 
 @wp.kernel
 def _update_trajectory_kernel_vec3(trajectory: wp.array(dtype=wp.vec3), 
@@ -136,158 +189,3 @@ def render_trajectory(name: str,
                                 parent_body=name)
         
         current_pos = next_pos
-
-def create_3d_figure() -> Tuple[plt.Figure, plt.Axes]:
-    """
-    Creates a 3D figure for plotting trajectories using Matplotlib.
-    
-    Returns:
-        plt.Figure: 3D figure for plotting trajectories.
-    """
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    return fig, ax
-
-
-def update_plot(ax: plt.Axes, 
-                trajectory: Union[list, np.ndarray, wp.array], 
-                target_trajectory: Union[list, np.ndarray, wp.array],
-                limits: Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float]] = ((-1, 1), (-1, 1), (-1, 1))):
-    """
-    Updates the 3D plot with the robot's trajectory and the target trajectory.
-
-    Args:
-        ax (plt.Axes): Matplotlib axes for the 3D plot.
-        trajectory (Union[list, np.ndarray, wp.array]): List or array of 3D trajectory points.
-        target_trajectory (Union[list, np.ndarray, wp.array]): List or array of 3D target trajectory points.
-    """
-
-    if isinstance(trajectory, list):
-        trajectory = np.array(trajectory)        
-    elif isinstance(trajectory, wp.array):
-        trajectory = trajectory.numpy()
-    elif isinstance(trajectory, np.ndarray):
-        pass
-    else:
-        raise ValueError("Trajectory must be a list, numpy array, or warp array.")
-    
-    if isinstance(target_trajectory, list):
-        target_trajectory = np.array(target_trajectory)
-    elif isinstance(target_trajectory, wp.array):
-        target_trajectory = target_trajectory.numpy()
-    elif isinstance(target_trajectory, np.ndarray):
-        pass
-    else:
-        raise ValueError("Target trajectory must be a list, numpy array, or warp array.")
-
-    # Determine the limits of the plot
-    x = np.concatenate([trajectory[:, 0], target_trajectory[:, 0]])
-    y = np.concatenate([trajectory[:, 1], target_trajectory[:, 1]])
-    z = np.concatenate([trajectory[:, 2], target_trajectory[:, 2]])
-
-    xlim = (min(x.min(), limits[0][0]), max(x.max(), limits[0][1]))
-    ylim = (min(y.min(), limits[1][0]), max(y.max(), limits[1][1]))
-    zlim = (min(z.min(), limits[2][0]), max(z.max(), limits[2][1]))
-
-    # print(f"X: {target_trajectory[:, 0].min()} - {target_trajectory[:, 0].max()}")
-    # print(f"Y: {target_trajectory[:, 1].min()} - {target_trajectory[:, 1].max()}")
-    # print(f"Z: {target_trajectory[:, 2].min()} - {target_trajectory[:, 2].max()}")
-
-    ax.cla()
-    plot_path(ax, trajectory, color='red', linewidth=2)
-    plot_path(ax, target_trajectory, color='blue', linewidth=2)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_xlim(xlim)
-    ax.set_ylim(ylim)
-    ax.set_zlim(zlim)
-    ax.set_title("3D Trajectory Plot")
-    plt.draw()
-    plt.pause(0.1)  # Pause to allow the plot to refresh
-
-
-def plot_path(ax: plt.Axes, trajectory: np.ndarray, color: str = 'red', linewidth: int = 2):
-    """
-    Plots a 3D trajectory using Matplotlib.
-
-    Args:
-        trajectory (np.ndarray): List or array of 3D trajectory points.
-        color (str): Color for the trajectory path. Defaults to 'red'.
-    """
-    assert isinstance(trajectory, np.ndarray), "Trajectory must be a numpy array."
-    assert trajectory.ndim == 2, "Trajectory must be a 2D array."
-    assert trajectory.shape[1] == 3, "Trajectory must be a 3D array."
-
-    # Extract X, Y, Z coordinates from the trajectory
-    x, y, z = trajectory[:, 0], trajectory[:, 1], trajectory[:, 2]
-    ax.plot(x, y, z, color=color, marker=None, linestyle='-', linewidth=linewidth)
-
-@wp.kernel
-def _trajectory_loss_kernel(trajectory: wp.array(dtype=wp.vec3f), 
-                            target_trajectory: wp.array(dtype=wp.vec3f), 
-                            loss: wp.array(dtype=wp.float32)):
-    """Compute the L2 loss between the trajectory and the target trajectory 
-       and add it to the loss array
-    
-    Args:
-        trajectory (wp.array): The trajectory of the robot
-        target_trajectory (wp.array): The target trajectory of the robot
-        loss (wp.array): The loss array, should be of size 1
-    """
-
-    tid = wp.tid()
-    diff = trajectory[tid] - target_trajectory[tid]
-    distance_loss = wp.dot(diff, diff)
-    wp.atomic_add(loss, 0, distance_loss)
-
-def add_trajectory_loss(trajectory: wp.array, target_trajectory: wp.array, loss: wp.array):
-    """
-    Compute the L2 loss between the trajectory and the target trajectory and add it to the loss array.
-
-    Args:
-        trajectory (wp.array): The trajectory of the robot.
-        target_trajectory (wp.array): The target trajectory of the robot.
-        loss (wp.array): The loss array, should be of size 1.
-    """
-    assert trajectory.shape == target_trajectory.shape, "Trajectory and target trajectory must have the same shape."
-    assert loss.shape == (1,), "Loss array should be of size 1."
-
-    wp.launch(kernel=_trajectory_loss_kernel, dim=len(trajectory), inputs=[trajectory, target_trajectory, loss])
-
-def plot_time_series(ax: plt.Axes, trajectory: Union[list, np.ndarray, wp.array], axis: str = 'x', color: str = 'red'):
-    """
-    Plots the time series of a trajectory along a specified axis.
-
-    Args:
-        ax (plt.Axes): Matplotlib axes for the time series plot.
-        trajectory (Union[list, np.ndarray, wp.array]): List or array of 3D trajectory points.
-        axis (str): Axis along which to plot the time series ('x', 'y', or 'z'). Defaults to 'x'.
-        color (str): Color for the time series plot. Defaults to 'red'.
-    """
-    if isinstance(trajectory, list):
-        trajectory = np.array(trajectory)        
-    elif isinstance(trajectory, wp.array):
-        trajectory = trajectory.numpy()
-    elif isinstance(trajectory, np.ndarray):
-        pass
-    else:
-        raise ValueError("Trajectory must be a list, numpy array, or warp array.")
-    
-    assert axis in ['x', 'y', 'z'], "Axis must be 'x', 'y', or 'z'."
-    
-    if axis == 'x':
-        data = trajectory[:, 0]
-        label = 'X'
-    elif axis == 'y':
-        data = trajectory[:, 1]
-        label = 'Y'
-    else:
-        data = trajectory[:, 2]
-        label = 'Z'
-    
-    ax.plot(data, color=color, label=label)
-    ax.set_xlabel("Time Step")
-    ax.set_ylabel("Position")
-    ax.set_title(f"{label}-Axis Time Series")
-    ax.legend()

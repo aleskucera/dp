@@ -14,6 +14,8 @@ from sim import *
 from dp_utils import *
 from sim.integrator_euler import eval_rigid_contacts
 
+from .loss import add_trajectory_loss
+
 
 OUTPUT_FILE = "data/output/pendulum.usd"
 
@@ -27,6 +29,7 @@ def simulate_pendulum_kernel(
     next_joint_qd: wp.array(dtype=wp.float32),
     joint_kd: wp.array(dtype=wp.float32),
     joint: JointInfo,
+    body: BodyInfo,
     gravity: wp.vec3f,
     arm_length: wp.float32,
     mass: wp.float32,
@@ -35,12 +38,14 @@ def simulate_pendulum_kernel(
     angle = current_joint_q[joint.axis_idx]
     angular_velocity = current_joint_qd[joint.axis_idx]
     damping_coeff = joint_kd[joint.axis_idx]
+    torque = current_body_f[body.idx][0]
 
     # Compute the angular acceleration
     angular_acceleration = (gravity[2] / arm_length) * wp.sin(angle)
     angular_acceleration -= (
         damping_coeff / (mass * wp.pow(arm_length, 2.0))
     ) * angular_velocity
+    angular_acceleration += torque / (mass * wp.pow(arm_length, 2.0))
 
     # Perform the integration
     next_angular_velocity = angular_velocity + angular_acceleration * dt
@@ -49,39 +54,6 @@ def simulate_pendulum_kernel(
     # Update the joint state
     next_joint_q[joint.axis_idx] = next_angle
     next_joint_qd[joint.axis_idx] = next_angular_velocity
-
-
-def set_joint_config(cfg: DictConfig, model: Union[wp.sim.Model, wp.sim.ModelBuilder]):
-    q_list = []
-    qd_list = []
-    target_ke_list = []
-    target_kd_list = []
-    axis_mode_list = []
-    joint_info_list = []
-
-    for joint in cfg.robot.joints:
-        q_list.append(joint.q)
-        qd_list.append(joint.qd)
-        target_ke_list.append(joint.target_ke)
-        target_kd_list.append(joint.target_kd)
-        axis_mode_list.append(joint.axis_mode)
-        joint_info_list.append(create_joint_info(joint.name, model))
-
-    set_joint_q(joints=joint_info_list, values=q_list, model=model)
-    set_joint_qd(joints=joint_info_list, values=qd_list, model=model)
-    set_joint_target_ke(joints=joint_info_list, values=target_ke_list, model=model)
-    set_joint_target_kd(joints=joint_info_list, values=target_kd_list, model=model)
-    set_joint_axis_mode(joints=joint_info_list, values=axis_mode_list, model=model)
-
-
-def get_robot_transform(cfg: DictConfig) -> wp.transformf:
-    position = wp.vec3(cfg.robot.position.x, cfg.robot.position.y, cfg.robot.position.z)
-    rotation = wp.quat_rpy(
-        math.radians(cfg.robot.rotation.roll),
-        math.radians(cfg.robot.rotation.pitch),
-        math.radians(cfg.robot.rotation.yaw),
-    )
-    return wp.transform(position, rotation)
 
 
 def pendulum_world_model(cfg: DictConfig) -> wp.sim.Model:
@@ -116,8 +88,6 @@ class PendulumOptim:
         self.sim_duration = cfg.sim.sim_duration
         self.sim_steps = cfg.sim.num_frames * cfg.sim.sim_substeps
 
-        self.iter = 0
-        self.profiler = {}
         self.sim_time = 0.0
 
         self.use_cuda_graph = wp.get_device().is_cuda
@@ -126,7 +96,6 @@ class PendulumOptim:
         self.init_state = self.model.state()
 
         # Create the integrator and renderer
-        self.integrator = wp.sim.FeatherstoneIntegrator(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, OUTPUT_FILE, scaling=1.0)
 
         self.pendulum_joint: JointInfo = create_joint_info("base_to_arm", self.model)
@@ -157,6 +126,7 @@ class PendulumOptim:
         )
 
         self.optimizer = wp.optim.Adam([self.kd], lr=0.1)
+        self.optim_segments = generate_segments(self.sim_steps, 10)
 
         self.fig, self.ax = plt.subplots()
 
@@ -171,7 +141,8 @@ class PendulumOptim:
         joint_kd: wp.array,
         dt: float,
     ):
-
+        current_state.clear_forces()
+        wp.sim.collide(self.model, current_state)
         if (
             self.model.rigid_contact_max
             and (self.model.ground
@@ -198,11 +169,6 @@ class PendulumOptim:
                 ],
                 outputs=[current_state.body_f]
             )
-        
-        body_f = current_state.body_f.numpy()
-        # If body_f is not zero, print it
-        if np.any(body_f):
-            print(f"Body f: {body_f}")
 
         wp.launch(
             kernel=simulate_pendulum_kernel,
@@ -215,6 +181,7 @@ class PendulumOptim:
                 next_state.joint_qd,
                 joint_kd,
                 self.pendulum_joint,
+                self.pendulum_end_body,
                 self.model.gravity,
                 self.arm_length,
                 self.mass,
@@ -299,9 +266,6 @@ def carter_demo(cfg: DictConfig):
     model.generate_target_trajectory()
     model.renderer.save()
     model.train()
-
-    # plot_time_series(ax=model.ax, trajectory=model.trajectory, axis='z')
-    # plt.show()
 
 
 if __name__ == "__main__":

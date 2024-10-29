@@ -1715,8 +1715,8 @@ class FeatherstoneIntegrator(Integrator):
                         device=model.device,
                     )
 
-                    # if model.rigid_contact_count.numpy()[0] > 0:
-                    #     print(body_f.numpy())
+                    if model.rigid_contact_count.numpy()[0] > 0:
+                        print(body_f.numpy())
 
                 if model.articulation_count:
                     # evaluate joint torques
@@ -1769,7 +1769,7 @@ class FeatherstoneIntegrator(Integrator):
                             inputs=[
                                 model.articulation_start,
                                 self.articulation_J_start,
-                                model.joint_ancestor,
+                                model.joint_parent,
                                 model.joint_qd_start,
                                 state_aug.joint_S_s,
                             ],

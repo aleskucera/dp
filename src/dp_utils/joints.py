@@ -4,6 +4,7 @@ import nvtx
 import warp.sim
 import warp as wp
 import numpy as np
+from omegaconf import DictConfig
 
 
 @wp.struct
@@ -36,6 +37,29 @@ def create_joint_info(
     joint_info.qd_idx = joint_qd_start[joint_info.joint_idx]
     joint_info.axis_idx = joint_axis_start[joint_info.joint_idx]
     return joint_info
+
+
+def set_joint_config(cfg: DictConfig, model: Union[wp.sim.Model, wp.sim.ModelBuilder]):
+    q_list = []
+    qd_list = []
+    target_ke_list = []
+    target_kd_list = []
+    axis_mode_list = []
+    joint_info_list = []
+
+    for joint in cfg.robot.joints:
+        q_list.append(joint.q)
+        qd_list.append(joint.qd)
+        target_ke_list.append(joint.target_ke)
+        target_kd_list.append(joint.target_kd)
+        axis_mode_list.append(joint.axis_mode)
+        joint_info_list.append(create_joint_info(joint.name, model))
+
+    set_joint_q(joints=joint_info_list, values=q_list, model=model)
+    set_joint_qd(joints=joint_info_list, values=qd_list, model=model)
+    set_joint_target_ke(joints=joint_info_list, values=target_ke_list, model=model)
+    set_joint_target_kd(joints=joint_info_list, values=target_kd_list, model=model)
+    set_joint_axis_mode(joints=joint_info_list, values=axis_mode_list, model=model)
 
 
 def set_joint_q(
