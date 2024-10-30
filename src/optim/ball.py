@@ -99,12 +99,12 @@ class BallOptim:
             lr=self.learning_rate,
         )
 
-        self.plot3d = Plot3D(xlim=(-0.5, 0.18), 
-                           ylim=(2.0, 2.57), 
-                           zlim=(0.0, 0.0), 
-                           padding=0.1)
+        self.plot3d = Plot3D(x_lim=(-0.5, 0.18),
+                             y_lim=(2.0, 2.57),
+                             z_lim=(0.0, 0.0),
+                             padding=0.1)
         
-        # self.plot2d = Plot2D(subplots=("x", "y", "z"))
+        self.plot2d = Plot2D(subplots=("x", "y", "z"))
                              
 
     def _reset(self):
@@ -127,6 +127,7 @@ class BallOptim:
             )
             self.target_trajectory.update_position(i, self.states[i].particle_q, 0)
 
+        self.plot2d.add_trajectory(self.target_trajectory)
         self.plot3d.add_trajectory(self.target_trajectory)
         self.renderer.add_trajectory(self.target_trajectory)
 
@@ -147,6 +148,7 @@ class BallOptim:
             loss = self.step()
             if i % 5 == 0:
                 print(f"Iteration {i}, Loss: {loss}")
+                self.plot2d.add_trajectory(self.trajectory, i)
                 self.plot3d.add_trajectory(self.trajectory, i)
 
             if i == 249:
@@ -178,7 +180,7 @@ def carter_demo(cfg: DictConfig):
     model.train()
     model.render_usd()
     model.plot3d.animate(num_frames=300, interval=100, save_path="data/output/ball_trajectory.mp4")
-    # model.plot2d.animate(num_frames=300, interval=100, save_path="data/output/ball_trajectory_2d.mp4")
+    model.plot2d.animate(num_frames=300, interval=100, save_path="data/output/ball_trajectory_2d.mp4")
 
 
 if __name__ == "__main__":

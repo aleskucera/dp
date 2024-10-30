@@ -8,28 +8,29 @@ from matplotlib.animation import FuncAnimation
 
 from dp_utils.trajectory import Trajectory
 
+
 @dataclass
 class Curve:
     name: str
     x: np.ndarray
     y: np.ndarray
     z: np.ndarray
-    color: str = 'red'
-    linewidth: int = 2
+    line_width: int = 2
+    color: Tuple[float, float, float] = (1.0, 0.0, 0.0)
 
 
 class Plot3D:
-    def __init__(self, 
-                 xlim: Tuple[float, float], 
-                 ylim: Tuple[float, float], 
-                 zlim: Tuple[float, float],
+    def __init__(self,
+                 x_lim: Tuple[float, float],
+                 y_lim: Tuple[float, float],
+                 z_lim: Tuple[float, float],
                  padding: float = 0.1):
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111, projection='3d')
 
-        self.base_xlim = xlim
-        self.base_ylim = ylim
-        self.base_zlim = zlim
+        self.base_x_lim = x_lim
+        self.base_y_lim = y_lim
+        self.base_z_lim = z_lim
         self.padding = padding
 
         self.x_label = "X"
@@ -43,16 +44,16 @@ class Plot3D:
         y = np.concatenate([curve.y for curve in self.curves[frame] + self.curves[-1]])
         z = np.concatenate([curve.z for curve in self.curves[frame] + self.curves[-1]])
 
-        xlim = (min(x.min(), self.base_xlim[0]) - self.padding, 
-                max(x.max(), self.base_xlim[1]) + self.padding)
-        ylim = (min(y.min(), self.base_ylim[0]) - self.padding,
-                max(y.max(), self.base_ylim[1]) + self.padding)
-        zlim = (min(z.min(), self.base_zlim[0]) - self.padding,
-                max(z.max(), self.base_zlim[1]) + self.padding)
+        x_lim = (min(x.min(), self.base_x_lim[0]) - self.padding,
+                 max(x.max(), self.base_x_lim[1]) + self.padding)
+        y_lim = (min(y.min(), self.base_y_lim[0]) - self.padding,
+                 max(y.max(), self.base_y_lim[1]) + self.padding)
+        z_lim = (min(z.min(), self.base_z_lim[0]) - self.padding,
+                 max(z.max(), self.base_z_lim[1]) + self.padding)
 
-        self.ax.set_xlim(xlim)
-        self.ax.set_ylim(ylim)
-        self.ax.set_zlim(zlim)
+        self.ax.set_xlim(x_lim)
+        self.ax.set_ylim(y_lim)
+        self.ax.set_zlim(z_lim)
 
     def _find_valid_frame(self, frame: int):
         f = frame
@@ -60,17 +61,22 @@ class Plot3D:
             f -= 1
         return f
 
-    def add_curve(self, name: str, data: np.ndarray, frame: int = -1, color: str = 'red', linewidth: int = 2):
+    def add_curve(self,
+                  name: str,
+                  data: np.ndarray,
+                  frame: int = -1,
+                  color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
+                  line_width: int = 2):
         x, y, z = data[:, 0], data[:, 1], data[:, 2]
         if frame in self.curves:
-            self.curves[frame].append(Curve(name, x, y, z, color, linewidth))
+            self.curves[frame].append(Curve(name, x, y, z, line_width, color))
         else:
-            self.curves[frame] = [Curve(name, x, y, z, color, linewidth)]
+            self.curves[frame] = [Curve(name, x, y, z, line_width, color)]
 
     def add_trajectory(self, trajectory: Trajectory, frame: int = -1):
         data = trajectory.data.numpy()
-        self.add_curve(trajectory.name, data, frame, trajectory.color, trajectory.plot_linewidth)
-    
+        self.add_curve(trajectory.name, data, frame, trajectory.color, trajectory.plot_line_width)
+
     def animate(self, num_frames: int, interval: int = 100, save_path: str = None):
         def update(frame):
             self.ax.cla()
@@ -79,7 +85,7 @@ class Plot3D:
 
             self._update_limits(valid_frame)
             for curve in self.curves[valid_frame] + self.curves[-1]:
-                self.ax.plot(curve.x, curve.y, curve.z, color=curve.color, linewidth=curve.linewidth, label=curve.name)
+                self.ax.plot(curve.x, curve.y, curve.z, color=curve.color, linewidth=curve.line_width, label=curve.name)
             self.ax.set_xlabel(self.x_label)
             self.ax.set_ylabel(self.y_label)
             self.ax.set_zlabel(self.z_label)
@@ -94,9 +100,10 @@ class Plot3D:
             else:
                 raise ValueError("Save path must be a .mp4 file.")
 
+
 # Demo with Sample Data
 if __name__ == "__main__":
-    plotter = Plot3D(xlim=(-5, 5), ylim=(-5, 5), zlim=(-5, 5))
+    plotter = Plot3D(x_lim=(-5, 5), y_lim=(-5, 5), z_lim=(-5, 5))
     t = np.linspace(0, 2 * np.pi, 100)
 
     # Adding curves for multiple frames
@@ -106,21 +113,25 @@ if __name__ == "__main__":
         z = t - np.pi
 
         data = np.vstack([x, y, z]).T
-        plotter.add_curve(name=f"Spiral_{i}", data=data, frame=i, color=plt.cm.viridis(i / 10), linewidth=2)
+        plotter.add_curve(name=f"Spiral_{i}",
+                          data=data,
+                          frame=i,
+                          color=plt.cm.viridis(i / 10),
+                          line_width=2)
         if i == 9:
-            plotter.add_curve(name="Static", data=data, frame=-1, color=plt.cm.viridis(i / 10), linewidth=2)
+            plotter.add_curve(name="Static",
+                              data=data,
+                              frame=-1,
+                              color=plt.cm.viridis(i / 10),
+                              line_width=2)
 
     # Run the animation
     plotter.animate(num_frames=10, interval=200, save_path="spiral.mp4")
 
-
-        
-            
-
 # def create_3d_figure() -> Tuple[plt.Figure, plt.Axes]:
 #     """
 #     Creates a 3D figure for plotting trajectories using Matplotlib.
-    
+
 #     Returns:
 #         plt.Figure: 3D figure for plotting trajectories.
 #     """

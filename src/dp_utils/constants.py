@@ -1,7 +1,6 @@
 import os
-from enum import Enum
 
-import warp as wp
+# import matplotlib.colors as mcolors
 
 PROJECT_DIR = os.path.abspath(
     os.path.join(
@@ -14,7 +13,6 @@ CONF_DIR = os.path.join(PROJECT_DIR, "conf")
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
 LOG_DIR = os.path.join(PROJECT_DIR, "logs")
 SRC_DIR = os.path.join(PROJECT_DIR, "src")
-
 
 # class GEO_TYPE(Enum):
 #     SPHERE = wp.constant(0)
