@@ -20,13 +20,17 @@ class Trajectory:
                  color: Color = RED):
         
         assert len(time) >= 2, "Time array must have at least two elements."
-        if data is not None:
-            assert len(data) == len(time), "Data and time arrays must have the same length."
         
         self.name = name
         self.time = time
+        self.data = data
 
-        self.data = wp.empty(len(time), dtype=wp.vec3, requires_grad=requires_grad) if data is None else data
+        if data is None:
+            self.data = wp.empty(len(time), dtype=wp.vec3, requires_grad=requires_grad)
+        else:
+            assert data.dtype == wp.vec3, "Data must be of type wp.vec3."
+            assert len(data) == len(time), "Data and time arrays must have the same length."
+            self.data.requires_grad = requires_grad
 
         self.color = color
         self.render_radius = render_radius
@@ -52,13 +56,20 @@ class Trajectory:
     def z(self):
         return self.data.numpy()[:, 2]
     
+    @property
+    def clone(self):
+        return Trajectory(self.name, self.time, wp.clone(self.data), self.data.requires_grad, 
+                          self.plot_line_width, self.render_radius, self.color)
+    
     def update_position(self, time_step: int, q: wp.array, q_idx: int):
         assert q.dtype == wp.vec3 or q.dtype == wp.transform, "Q must be of type wp.vec3 or wp.transform."
 
         if q.dtype == wp.vec3:
-            wp.launch(kernel=_update_trajectory_kernel_vec3, dim=1, inputs=[self.data, q, time_step, q_idx])
+            wp.launch(kernel=_update_trajectory_kernel_vec3, dim=1, 
+                      inputs=[self.data, q, time_step, q_idx])
         else:
-            wp.launch(kernel=_update_trajectory_kernel_transform, dim=1, inputs=[self.data, q, time_step, q_idx])
+            wp.launch(kernel=_update_trajectory_kernel_transform, dim=1, 
+                      inputs=[self.data, q, time_step, q_idx])
 
 
 @wp.kernel
@@ -66,15 +77,6 @@ def _update_trajectory_kernel_vec3(trajectory: wp.array(dtype=wp.vec3),
                                    q: wp.array(dtype=wp.vec3), 
                                    time_step: wp.int32, 
                                    q_idx: wp.int32):
-    """
-    Updates the trajectory array at the specified time step using a 3D vector position from `q`.
-
-    Args:
-        trajectory (wp.array): Array to store trajectory positions as wp.vec3 elements.
-        q (wp.array): Array of 3D vector positions (wp.vec3).
-        time_step (wp.int32): Index in `trajectory` to store the updated position.
-        q_idx (wp.int32): Index in `q` to get the position.
-    """
     trajectory[time_step] = q[q_idx]
 
 @wp.kernel
@@ -82,15 +84,6 @@ def _update_trajectory_kernel_transform(trajectory: wp.array(dtype=wp.vec3),
                                         q: wp.array(dtype=wp.transform), 
                                         time_step: wp.int32, 
                                         q_idx: wp.int32):
-    """
-    Updates the trajectory array at the specified time step using a translation from a transformation in `q`.
-
-    Args:
-        trajectory (wp.array): Array to store trajectory positions as wp.vec3 elements.
-        q (wp.array): Array of transformations (wp.transform).
-        time_step (wp.int32): Index in `trajectory` to store the updated position.
-        q_idx (wp.int32): Index in `q` to get the translation position.
-    """
     trajectory[time_step] = wp.transform_get_translation(q[q_idx])
 
 # def update_trajectory(trajectory: wp.array, q: wp.array, time_step: int, q_idx: int):

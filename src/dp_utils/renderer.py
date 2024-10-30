@@ -15,8 +15,10 @@ class Renderer:
 
         self.trajectories = []
 
-    def render(self, states: List[wp.sim.State]):
+    def save(self, states: List[wp.sim.State]):
         assert len(self.time) <= len(states), "Time and states must have the same length."
+
+        print("Creating USD render...")
         for t, state in zip(self.time, states):
             self.renderer.begin_frame(t)
             self.renderer.render(state)
@@ -49,7 +51,7 @@ class Renderer:
             self.renderer.render_capsule(name=f"c{i}", 
                                          pos=pos,
                                          rot=rot,
-                                         color=trajectory.color,
+                                         color=trajectory.color.rgb,
                                          half_height=half_height,
                                          parent_body=trajectory.name,
                                          radius=trajectory.render_radius)

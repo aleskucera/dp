@@ -15,7 +15,13 @@ from .bodies import BodyInfo, create_body_info, update_trajectory_kernel, get_q
 from .general import custom_eval, get_index_by_value, get_robot_transform, generate_segments
 from .constants import PROJECT_DIR, CONF_DIR, DATA_DIR, LOG_DIR, SRC_DIR
 from .colors import *
-from .trajectory import update_trajectory, render_trajectory, Trajectory
+from .trajectory import Trajectory
+from .worlds import (
+    ball_world_model,
+    carter_world_model,
+    pendulum_world_model
+)
+    
 
 from .plot3d import Plot3D
 from .plot2d import Plot2D
