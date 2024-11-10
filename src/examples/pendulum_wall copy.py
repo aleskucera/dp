@@ -18,27 +18,6 @@ USD_FILE = "data/output/pendulum_wall.usd"
 PLOT2D_FILE = "data/output/pendulum_wall_2d.mp4"
 
 @wp.kernel
-def integrate_pendulum(
-    curr_body_q: wp.array(dtype=wp.transform),
-    curr_body_qd: wp.array(dtype=wp.spatial_vector),
-    curr_body_f: wp.array(dtype=wp.spatial_vector),
-    next_body_q: wp.array(dtype=wp.transform),
-    next_body_qd: wp.array(dtype=wp.spatial_vector),
-    shape_body: wp.array(dtype=wp.int32),
-    rigid_contact_count: wp.array(dtype=wp.int32),
-    rigid_contact_point0: wp.array(dtype=wp.vec3),
-    rigid_contact_point1: wp.array(dtype=wp.vec3),
-    rigid_contact_normal: wp.array(dtype=wp.vec3),
-    rigid_contact_shape0: wp.array(dtype=wp.int32),
-    rigid_contact_shape1: wp.array(dtype=wp.int32),
-    pendulum_end_body: BodyInfo,
-    radius: wp.float32,
-    restitution: wp.float32,
-    dt: wp.float32
-):
-    pass
-
-@wp.kernel
 def simulate_pendulum_kernel(
     current_joint_q: wp.array(dtype=wp.float32),
     current_joint_qd: wp.array(dtype=wp.float32),
@@ -93,7 +72,6 @@ class PendulumWallSim:
 
         self.pendulum_joint: JointInfo = create_joint_info("base_to_arm", self.model)
         self.pendulum_end_body: BodyInfo = create_body_info("pendulum_end", self.model)
-        self.wall_body: BodyInfo = create_body_info("wall", self.model)
 
         # TODO: Get the arm length from the model
         self.mass = 1
@@ -127,9 +105,8 @@ class PendulumWallSim:
         curr_state.clear_forces()
         wp.sim.collide(self.model, curr_state)
 
-        contact_count = self.model.rigid_contact_count.numpy()[0]
-        if contact_count > 0:
-            print(f"Rigid contact count: {contact_count}")
+        if self.rigid_contact_count > 0:
+            print(f"Rigid contact count: {self.rigid_contact_count}")
 
         wp.launch(
             kernel=eval_rigid_contacts,
@@ -189,7 +166,7 @@ def pendulum_simple_simulation(cfg: DictConfig):
 
     model = PendulumWallSim(cfg)
     model.generate_target_trajectory()
-    # model.animate_2d_plot(save_path=PLOT2D_FILE)
+    model.animate_2d_plot(save_path=PLOT2D_FILE)
     model.save_usd()
 
 

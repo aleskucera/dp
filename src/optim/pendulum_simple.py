@@ -129,7 +129,8 @@ class PendulumSimpleOptim:
         self._reset()
         with self.tape:
             self.forward(segment)
-            add_trajectory_loss(self.trajectory, self.target_trajectory, self.loss)
+            add_trajectory_loss(self.trajectory, self.target_trajectory, 
+                                self.loss, (segment["start"], segment["end"]))
         self.tape.backward(self.loss)
         self.optimizer.step(grad=[self.kd.grad])
         self.tape.zero()
@@ -142,6 +143,7 @@ class PendulumSimpleOptim:
         vis_interval = self.epochs_per_segment // self.frames_per_segment
 
         for segment in self.optim_segments:
+            self.optimizer.reset_internal_state()
             for _ in range(self.epochs_per_segment):
                 loss = self.step(segment=segment)
 

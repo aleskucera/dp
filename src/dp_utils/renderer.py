@@ -15,19 +15,25 @@ class Renderer:
 
         self.trajectories = []
 
-    def save(self, states: List[wp.sim.State]):
+    def save(self, states: List[wp.sim.State], fps: int = 30):
         assert len(self.time) <= len(states), "Time and states must have the same length."
+
+        frame_interval = 1.0 / fps  # time interval per frame
+        last_rendered_time = 0.0    # tracks the time of the last rendered frame
 
         print("Creating USD render...")
         for t, state in zip(self.time, states):
-            self.renderer.begin_frame(t)
-            self.renderer.render(state)
-            for trajectory in self.trajectories:
-                self.render_trajectory(trajectory)
+            if t >= last_rendered_time:  # render only if enough time has passed
+                self.renderer.begin_frame(t)
+                self.renderer.render(state)
+                for trajectory in self.trajectories:
+                    self.render_trajectory(trajectory)
 
-            self.renderer.end_frame()
+                self.renderer.end_frame()
+                last_rendered_time += frame_interval  # update to next frame time
 
         self.renderer.save()
+
 
     def add_trajectory(self, trajectory: Trajectory):
         self.trajectories.append(trajectory)

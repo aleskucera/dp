@@ -13,30 +13,11 @@ from sim import *
 from dp_utils import *
 from sim.integrator_euler import eval_rigid_contacts
 
+from optim.loss import add_trajectory_loss
 
-USD_FILE = "data/output/pendulum_wall.usd"
-PLOT2D_FILE = "data/output/pendulum_wall_2d.mp4"
 
-@wp.kernel
-def integrate_pendulum(
-    curr_body_q: wp.array(dtype=wp.transform),
-    curr_body_qd: wp.array(dtype=wp.spatial_vector),
-    curr_body_f: wp.array(dtype=wp.spatial_vector),
-    next_body_q: wp.array(dtype=wp.transform),
-    next_body_qd: wp.array(dtype=wp.spatial_vector),
-    shape_body: wp.array(dtype=wp.int32),
-    rigid_contact_count: wp.array(dtype=wp.int32),
-    rigid_contact_point0: wp.array(dtype=wp.vec3),
-    rigid_contact_point1: wp.array(dtype=wp.vec3),
-    rigid_contact_normal: wp.array(dtype=wp.vec3),
-    rigid_contact_shape0: wp.array(dtype=wp.int32),
-    rigid_contact_shape1: wp.array(dtype=wp.int32),
-    pendulum_end_body: BodyInfo,
-    radius: wp.float32,
-    restitution: wp.float32,
-    dt: wp.float32
-):
-    pass
+USD_FILE = "data/output/pendulum_wall_optim.usd"
+PLOT2D_FILE = "data/output/pendulum_wall_optim_2d.mp4"
 
 @wp.kernel
 def simulate_pendulum_kernel(
@@ -73,9 +54,11 @@ def simulate_pendulum_kernel(
     next_joint_q[joint.axis_idx] = next_angle
     next_joint_qd[joint.axis_idx] = next_angular_velocity
 
-class PendulumWallSim:
+
+class PendulumSimpleOptim:
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
+        self.epoch = 0
 
         # Simulation and rendering parameters
         self.fps = cfg.sim.fps
@@ -93,43 +76,108 @@ class PendulumWallSim:
 
         self.pendulum_joint: JointInfo = create_joint_info("base_to_arm", self.model)
         self.pendulum_end_body: BodyInfo = create_body_info("pendulum_end", self.model)
-        self.wall_body: BodyInfo = create_body_info("wall", self.model)
 
         # TODO: Get the arm length from the model
         self.mass = 1
         self.arm_length = 1
 
+        self.loss = wp.array([0.0], dtype=wp.float32, requires_grad=True)
         self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
-        wp.sim.eval_fk(
-            self.model, self.model.joint_q, self.model.joint_qd, None, self.states[0]
-        )
+        self.target_states = [self.model.state() for _ in range(self.sim_steps + 1)]
+        wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.states[0])
 
-        self.trajectory = Trajectory("trajectory", self.time, color=BLUE)
+        self.kd = wp.array([np.random.uniform(0, 1)], dtype=wp.float32, requires_grad=True)
+        self.trajectory = Trajectory("trajectory", self.time, color=BLUE, requires_grad=True)
 
-        self.plot2d = Plot2D(("x", "y", "z"), 
-                             val_lims=[(-1, 1), (-1.5, 1.5), (0, 2)],
-                             time_lims=[(0, 2), (0, 2), (0, 2)])
+        self.target_kd = wp.array([2.0], dtype=wp.float32)
+        self.target_trajectory = Trajectory("target_trajectory", self.time, color=ORANGE)
+
+        self.best_loss = np.inf
+        self.best_kd = wp.clone(self.kd)
+        self.best_trajectory = self.trajectory.clone
+
+        self.epoch = 0
+        self.optimizer = wp.optim.Adam([self.kd], lr=0.1)
+        self.optim_segments = generate_segments(self.sim_steps, 6)
+        self.frames_per_segment = 10
+        self.epochs_per_segment = 100
+        self.num_plot_frames = len(self.optim_segments) * self.frames_per_segment
+
+        self.plot2d = Plot2D(("x", "y", "z"))
+
+    def _reset(self):
+        self.loss = wp.array([0], dtype=wp.float32, requires_grad=True)
 
     def generate_target_trajectory(self):
         for i in range(self.sim_steps):
-            curr_state = self.states[i]
-            next_state = self.states[i + 1]
-            self.simulate(curr_state, next_state, self.sim_dt)
-
-            self.trajectory.update_position(i, curr_state.body_q, self.pendulum_end_body.idx)
+            curr_state = self.target_states[i]
+            next_state = self.target_states[i + 1]
+            self.simulate(curr_state, next_state, self.target_kd, self.sim_dt)
+            self.target_trajectory.update_position(i, curr_state.body_q, self.pendulum_end_body.idx)
             
-            if i > 0:
-                self.plot2d.add_trajectory(self.trajectory, i, i)
-        
-        self.renderer.add_trajectory(self.trajectory)
+        self.plot2d.add_trajectory(self.target_trajectory)
+        self.renderer.add_trajectory(self.target_trajectory)
 
-    def simulate(self, curr_state: wp.sim.State, next_state: wp.sim.State, dt: float):
+    def forward(self, segment: dict):
+        for i in range(segment["start"], segment["end"]):
+            if i == 0:
+                curr_state = self.target_states[i]
+            else:
+                curr_state = self.states[i]
+            next_state = self.states[i + 1]
+            self.simulate(curr_state, next_state, self.kd, self.sim_dt)
+            self.trajectory.update_position(i, curr_state.body_q, self.pendulum_end_body.idx)
+
+    def step(self, segment: dict):
+        self.tape = wp.Tape()
+        self._reset()
+        with self.tape:
+            self.forward(segment)
+            add_trajectory_loss(self.trajectory, self.target_trajectory, 
+                                self.loss, (segment["start"], segment["end"]))
+        self.tape.backward(self.loss)
+        self.optimizer.step(grad=[self.kd.grad])
+        self.tape.zero()
+
+        return self.loss.numpy()[0]
+
+    def train(self):
+        epoch = 0
+        frame = 0
+        vis_interval = self.epochs_per_segment // self.frames_per_segment
+
+        for segment in self.optim_segments:
+            self.optimizer.reset_internal_state()
+            for _ in range(self.epochs_per_segment):
+                loss = self.step(segment=segment)
+
+                if loss < self.best_loss:
+                    self.best_loss = loss
+                    self.best_kd = wp.clone(self.kd)
+                    self.best_trajectory = self.trajectory.clone
+                
+                if epoch % vis_interval == 0:
+                    print(f"Epoch {epoch}, Loss: {loss}")
+                    self.plot2d.add_trajectory(self.trajectory, frame)
+                    frame += 1
+
+                epoch += 1
+
+            print(f"Best KD: {self.best_kd}")
+
+        print(f"Best Loss: {self.best_loss}")
+        print(f"Best KD: {self.best_kd}")
+        self.renderer.add_trajectory(self.best_trajectory)
+
+    def save_usd(self):
+        self.renderer.save(self.states)
+
+    def animate_2d_plot(self, save_path: str = None):
+        self.plot2d.animate(num_frames=self.num_plot_frames, save_path=save_path)
+
+    def simulate(self, curr_state: wp.sim.State, next_state: wp.sim.State, joint_kd: wp.array, dt: float):
         curr_state.clear_forces()
         wp.sim.collide(self.model, curr_state)
-
-        contact_count = self.model.rigid_contact_count.numpy()[0]
-        if contact_count > 0:
-            print(f"Rigid contact count: {contact_count}")
 
         wp.launch(
             kernel=eval_rigid_contacts,
@@ -161,7 +209,7 @@ class PendulumWallSim:
                 curr_state.body_f,
                 next_state.joint_q,
                 next_state.joint_qd,
-                self.model.joint_target_kd,
+                joint_kd,
                 self.pendulum_joint,
                 self.pendulum_end_body,
                 self.model.gravity,
@@ -174,24 +222,19 @@ class PendulumWallSim:
         wp.sim.eval_fk(
             self.model, next_state.joint_q, next_state.joint_qd, None, next_state
         )
-        
-    def save_usd(self):
-        self.renderer.save(self.states)
-    
-    def animate_2d_plot(self, save_path: str = None):
-        self.plot2d.animate(self.sim_steps, interval=10, save_path=save_path)
     
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
-def pendulum_simple_simulation(cfg: DictConfig):
+def pendulum_wall_optimization(cfg: DictConfig):
     OmegaConf.register_new_resolver("eval", custom_eval)
     OmegaConf.resolve(cfg)
 
-    model = PendulumWallSim(cfg)
+    model = PendulumSimpleOptim(cfg)
     model.generate_target_trajectory()
-    # model.animate_2d_plot(save_path=PLOT2D_FILE)
+    model.train()
+    model.animate_2d_plot(save_path=PLOT2D_FILE)
     model.save_usd()
 
 
 if __name__ == "__main__":
-    pendulum_simple_simulation()
+    pendulum_wall_optimization()

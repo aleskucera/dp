@@ -1782,35 +1782,7 @@ def solve_body_joints(
                 dt,
             )
 
-            lin_delta_p += linear_p * (d_lambda * linear_relaxation)
-            ang_delta_p += angular_p * (d_lambda * angular_relaxation)
-            lin_delta_c += linear_c * (d_lambda * linear_relaxation)
-            ang_delta_c += angular_c * (d_lambda * angular_relaxation)
-
-    else:
-        # compute joint target, stiffness, damping
-        ke_sum = float(0.0)
-        axis_limits = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        axis_mode = wp.vec3i(0, 0, 0)
-        axis_target_ke_kd = wp.mat33(0.0)
-        # avoid a for loop here since local variables would need to be modified which is not yet differentiable
-        if lin_axis_count > 0:
-            axis = joint_axis[axis_start]
-            lo_temp = axis * joint_limit_lower[axis_start]
-            up_temp = axis * joint_limit_upper[axis_start]
-            axis_limits = wp.spatial_vector(vec_min(lo_temp, up_temp), vec_max(lo_temp, up_temp))
-            mode = joint_axis_mode[axis_start]
-            if mode != JOINT_MODE_FORCE:  # position or velocity target
-                ke = joint_target_ke[axis_start]
-                kd = joint_target_kd[axis_start]
-                target = joint_act[axis_start]
-                axis_mode = update_joint_axis_mode(mode, axis, axis_mode)
-                axis_target_ke_kd = update_joint_axis_target_ke_kd(axis, target, ke, kd, axis_target_ke_kd)
-                ke_sum += ke
-        if lin_axis_count > 1:
-            axis_idx = axis_start + 1
-            axis = joint_axis[axis_idx]
-            lower = joint_limit_lower[axis_idx]
+            lin_delta_p += linear_p * (d_lambda * linear_relaxationower = joint_limit_lower[axis_idx]
             upper = joint_limit_upper[axis_idx]
             axis_limits = update_joint_axis_limits(axis, lower, upper, axis_limits)
             mode = joint_axis_mode[axis_idx]
@@ -2675,7 +2647,7 @@ class XPBDIntegrator(Integrator):
 
         self.enable_restitution = enable_restitution
 
-        self.compute_body_velocity_from_position_delta = False
+        self.compute_body_velocity_from_position_delta = True
 
         # helper variables to track constraint resolution vars
         self._particle_delta_counter = 0

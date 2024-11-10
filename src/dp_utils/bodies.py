@@ -2,16 +2,29 @@ from typing import List, Union
 
 import nvtx
 import warp as wp
+import warp.sim
 
 
 @wp.struct
 class BodyInfo:
     idx: wp.int32
+    shapes: wp.array(dtype=wp.int32)
+    coll_shapes: wp.array(dtype=wp.int32)
 
 
 def create_body_info(body_name: str, model: wp.sim.Model) -> BodyInfo:
     body_info = BodyInfo()
     body_info.idx = model.body_name.index(body_name)
+    
+    shapes = model.body_shapes[body_info.idx]
+    
+    coll_shapes = []
+    for shape_idx in shapes:
+        if model.shape_shape_collision[shape_idx]:
+            coll_shapes.append(shape_idx)
+
+    body_info.shapes = wp.array(shapes, dtype=wp.int32)
+    body_info.coll_shapes = wp.array(coll_shapes, dtype=wp.int32)
     return body_info
 
 
