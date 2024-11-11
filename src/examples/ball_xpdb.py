@@ -93,7 +93,6 @@ def solve_distance_constraint(
 
     pos1 = wp.transform_get_translation(body_q[ball1.idx])
     pos2 = wp.transform_get_translation(body_q[ball2.idx])
-
     
 
 @wp.func
