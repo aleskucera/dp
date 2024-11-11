@@ -1,11 +1,12 @@
 import numpy as np
-import matplotlib.pyplot as plt
-
+import matplotlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.patches import Rectangle
 from scipy.spatial.transform import Rotation as R
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+matplotlib.use('TkAgg')
 
 # Quaternion rotation
 def rotate_vector_with_quaternion(q, v):
@@ -21,16 +22,16 @@ def multiply_quaternions(q1, q2):
 
 
 class AnimationController:
-    def __init__(self, x, q, r_w, a, num_iters):
+    def __init__(self, x, q, r, a, num_iters):
         self.x = x
         self.q = q
         self.a = a
-        self.r_w = r_w
+        self.r = r
         self.num_iters = num_iters
         self.current_frame = 0  # Start at the first frame
 
         # Set up the plot
-        self.fig, self.ax = plt.subplots()
+        self.fig, self.ax = plt.subplots(figsize=(8, 8))
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         self.update_plot()  # Display the first frame
 
@@ -69,7 +70,7 @@ class AnimationController:
                 self.ax,
                 self.x[self.current_frame][j],  # Center of the body
                 self.q[self.current_frame][j],  # Quaternion for orientation
-                self.r_w[self.current_frame][j],  # Relative position vector
+                self.r[j],  # Relative position vector
                 self.a[j],  # Dimensions of the body
                 colors[j]
             )
@@ -95,14 +96,14 @@ class AnimationController:
             linewidth=1,
             edgecolor=color,
             facecolor='none',
-            angle=angle,
+            angle=float(angle),
             rotation_point='center'  # Rotate around the rectangle's center
         )
 
         # Add the rectangle to the plot
         ax.add_patch(rect)
 
-def apply_positional_correction(x1, x2, q1, q2, m1, m2, r1, r2, lambda_, n, I1, I2):
+def apply_positional_correction(x1, x2, q1, q2, m1, m2, r1, r2, d_lambda, n, I1, I2):
     """
     Apply a positional correction based on equations (6)-(9) in the paper using quaternion math.
 
@@ -111,7 +112,7 @@ def apply_positional_correction(x1, x2, q1, q2, m1, m2, r1, r2, lambda_, n, I1, 
     - q1, q2: np.array of shape (4,), quaternions of body 1 and body 2 (in [x, y, z, w] format)
     - m1, m2: float, masses of body 1 and body 2
     - r1, r2: np.array of shape (3,), relative positions of the constraint from the center of mass of each body
-    - delta_lambda: float, Lagrange multiplier update (correction magnitude)
+    - d_lambda: float, Lagrange multiplier update (correction magnitude)
     - n: np.array of shape (3,), direction of correction (normalized vector)
     - I1, I2: np.array of shape (3,3), inertia tensors of body 1 and body 2
 
@@ -119,23 +120,29 @@ def apply_positional_correction(x1, x2, q1, q2, m1, m2, r1, r2, lambda_, n, I1, 
     - Updated positions and quaternions of both bodies.
     """
     # Calculate the positional impulse
-    p = lambda_ * n
+    p = d_lambda * n
 
     # Update positions (x1, x2)
     x1_new = x1 + (p / m1)
     x2_new = x2 - (p / m2)
 
     # Compute rotational impulse corrections as angular velocities
-    omega1 = 0.5 * (np.linalg.inv(I1) @ np.cross(r1, p))
-    omega2 = 0.5 * (np.linalg.inv(I2) @ np.cross(r2, p))
+    omega1 = np.linalg.inv(I1) @ np.cross(r1, p)
+    if np.linalg.norm(omega1) == 0:
+        q1_new = q1
+    else:
+        omega_1_norm = np.linalg.norm(omega1)
+        q1_correction = np.hstack([np.sin(omega_1_norm / 2) * omega1 / omega_1_norm, np.cos(omega_1_norm / 2)])
+        q1_new = multiply_quaternions(q1_correction, q1)
 
-    # Convert angular velocities to quaternion format and apply rotation
-    q1_correction = np.array([*omega1, 0])
-    q2_correction = np.array([*omega2, 0])
-
-    # Update quaternions using quaternion multiplication
-    q1_new = q1 + multiply_quaternions(q1, q1_correction)
-    q2_new = q2 - multiply_quaternions(q2, q2_correction)
+    # If omega2 is non-zero, compute the correction for body 2
+    omega2 = np.linalg.inv(I2) @ np.cross(r2, p)
+    if np.linalg.norm(omega2) == 0:
+        q2_new = q2
+    else:
+        omega_2_norm = np.linalg.norm(omega2)
+        q2_correction = np.hstack([np.sin(-omega_2_norm / 2) * omega2 / omega_2_norm, np.cos(-omega_2_norm / 2)])
+        q2_new = multiply_quaternions(q2_correction, q2)
 
     # Normalize the updated quaternions
     q1_new /= np.linalg.norm(q1_new)
@@ -167,7 +174,7 @@ def main():
     
     # Define the first rectangular body
     m1 = 1.0                        # Mass
-    x1 = np.array([7.0, 5.0, 0.0])  # Position of the center of mass
+    x1 = np.array([10.0, 4.0, 0.0])  # Position of the center of mass
     q1 = np.array([0, 0, 0, 1])     # Quaternion representing no rotation
     r1 = np.array([0.0, -1.0, 0.0]) # Relative position of the constraint from the center of mass
     a1 = np.array([2.0, 2.0, 0.0])  # Dimensions of the body (2D)
@@ -185,23 +192,19 @@ def main():
                 [0, (m2 * a2[1] ** 2) / 6, 0],
                 [0, 0, 1]])         # Inertia tensor (the third dimension is ignored)
 
-    lambda_ = 0.0  # Initial Lagrange multiplier
     a = np.array([a1, a2])  # Store the dimensions of the bodies
+    r = np.array([r1, r2])  # Store the relative positions of the constraints
     x = np.zeros((num_iters, 2, 3), dtype=np.float32)  # Array to store the positions of the bodies
     q = np.zeros((num_iters, 2, 4), dtype=np.float32)  # Array to store the quaternions of the bodies
-    r = np.zeros((num_iters, 2, 3), dtype=np.float32)  # Array to store the relative positions of the constraints
 
     # Store the initial positions and rotations    
     x[0] = np.array([x1, x2])
     q[0] = np.array([q1, q2])
-    r[0] = np.array([r1, r2])
 
     for i in range(num_iters - 1):
         print(f"\nIteration {i + 1}:")
-
         x1, x2 = x[i]
         q1, q2 = q[i]
-
         # Compute the normalized direction vector n and the correction magnitude c
         n, c = compute_correction_vector(x1, x2, q1, q2, r1, r2)
         print(f"Normalized direction n: {n}")
@@ -209,8 +212,6 @@ def main():
 
         d_lambda = compute_d_lambda(r1, r2, n, c, m1, m2, I1, I2)
         print(f"Lagrange multiplier update d_lambda: {d_lambda}")
-
-        lambda_ += d_lambda
 
         x1_new, x2_new, q1_new, q2_new = apply_positional_correction(x1, x2, q1, q2, m1, m2, r1, r2, d_lambda, n, I1, I2)
 
@@ -228,11 +229,11 @@ def main():
         print("\nUpdated relative positions:")
         print("Body 1 r:", r1_w)
         print("Body 2 r:", r2_w)
+        print(f"Distance between bodies: {np.linalg.norm(r1_w - r2_w)}")
 
         # Store the updated positions and rotations
         x[i + 1] = np.array([x1_new, x2_new])
         q[i + 1] = np.array([q1_new, q2_new])
-        r[i + 1] = np.array([r1, r2])
 
     anim_controller = AnimationController(x, q, r, a, num_iters)
     plt.show()
