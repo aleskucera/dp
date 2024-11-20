@@ -87,10 +87,10 @@ class PendulumSimpleOptim:
         wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.states[0])
 
         self.kd = wp.array([np.random.uniform(0, 1)], dtype=wp.float32, requires_grad=True)
-        self.trajectory = Trajectory("trajectory", self.time, color=BLUE, requires_grad=True)
+        self.trajectory = Trajectory("trajectory", self.time, render_color=BLUE, requires_grad=True)
 
         self.target_kd = wp.array([2.0], dtype=wp.float32)
-        self.target_trajectory = Trajectory("target_trajectory", self.time, color=ORANGE)
+        self.target_trajectory = Trajectory("target_trajectory", self.time, render_color=ORANGE)
 
         self.best_loss = np.inf
         self.best_kd = wp.clone(self.kd)
@@ -113,7 +113,7 @@ class PendulumSimpleOptim:
             curr_state = self.target_states[i]
             next_state = self.target_states[i + 1]
             self.simulate(curr_state, next_state, self.target_kd, self.sim_dt)
-            self.target_trajectory.update_position(i, curr_state.body_q, self.pendulum_end_body.idx)
+            self.target_trajectory.update_data(i, curr_state.body_q, self.pendulum_end_body.idx)
             
         self.plot2d.add_trajectory(self.target_trajectory)
         self.renderer.add_trajectory(self.target_trajectory)
@@ -126,7 +126,7 @@ class PendulumSimpleOptim:
                 curr_state = self.states[i]
             next_state = self.states[i + 1]
             self.simulate(curr_state, next_state, self.kd, self.sim_dt)
-            self.trajectory.update_position(i, curr_state.body_q, self.pendulum_end_body.idx)
+            self.trajectory.update_data(i, curr_state.body_q, self.pendulum_end_body.idx)
 
     def step(self, segment: dict):
         self.tape = wp.Tape()

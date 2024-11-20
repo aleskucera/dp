@@ -42,5 +42,5 @@ def add_trajectory_loss(trajectory: Trajectory, target_trajectory: Trajectory, l
         offset = interval[0]
         kernel_dim = interval[1] - interval[0]
 
-    wp.launch(kernel=_trajectory_loss_kernel, dim=kernel_dim, 
-              inputs=[trajectory.data, target_trajectory.data, offset, loss])
+    wp.launch(kernel=_trajectory_loss_kernel, dim=kernel_dim,
+              inputs=[trajectory.pos, target_trajectory.pos, offset, loss])

@@ -77,7 +77,7 @@ class Plot3D:
             self.curves[frame] = [Curve(name, x, y, z, line_width, color)]
 
     def add_trajectory(self, trajectory: Trajectory, frame: int = -1):
-        data = trajectory.data.numpy()
+        data = trajectory.pos.numpy()
         self.add_curve(trajectory.name, data, frame, trajectory.color, trajectory.plot_line_width)
 
     def animate(self, num_frames: int, interval: int = 100, save_path: str = None):

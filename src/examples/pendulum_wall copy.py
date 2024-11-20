@@ -82,7 +82,7 @@ class PendulumWallSim:
             self.model, self.model.joint_q, self.model.joint_qd, None, self.states[0]
         )
 
-        self.trajectory = Trajectory("trajectory", self.time, color=BLUE)
+        self.trajectory = Trajectory("trajectory", self.time, render_color=BLUE)
 
         self.plot2d = Plot2D(("x", "y", "z"), 
                              val_lims=[(-1, 1), (-1.5, 1.5), (0, 2)],
@@ -94,7 +94,7 @@ class PendulumWallSim:
             next_state = self.states[i + 1]
             self.simulate(curr_state, next_state, self.sim_dt)
 
-            self.trajectory.update_position(i, curr_state.body_q, self.pendulum_end_body.idx)
+            self.trajectory.update_data(i, curr_state.body_q, self.pendulum_end_body.idx)
             
             if i > 0:
                 self.plot2d.add_trajectory(self.trajectory, i, i)

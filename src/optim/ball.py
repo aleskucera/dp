@@ -68,8 +68,8 @@ class BallOptim:
         self.force = wp.array(random_force(self.time), dtype=wp.vec3f, requires_grad=True)
         self.target_force = wp.array(target_force(self.time), dtype=wp.vec3f)
 
-        self.trajectory = Trajectory("trajectory", self.time, color=BLUE, requires_grad=True)
-        self.target_trajectory = Trajectory("target_trajectory", self.time, color=ORANGE)
+        self.trajectory = Trajectory("trajectory", self.time, render_color=BLUE, requires_grad=True)
+        self.target_trajectory = Trajectory("target_trajectory", self.time, render_color=ORANGE)
 
         self.epoch = 0
         self.num_epochs = 1
@@ -95,7 +95,7 @@ class BallOptim:
             wp.sim.collide(self.model, curr_state)
             self.integrator.simulate(self.model, curr_state, next_state, self.frame_dt)
             print(f"Body q: {curr_state.body_q.numpy()}")
-            self.target_trajectory.update_position(i, curr_state.body_q, 0)
+            self.target_trajectory.update_data(i, curr_state.body_q, 0)
 
         self.plot2d.add_trajectory(self.target_trajectory)
         self.plot3d.add_trajectory(self.target_trajectory)
@@ -109,7 +109,7 @@ class BallOptim:
             wp.launch(apply_force_kernel, dim=1, inputs=[curr_state.body_f, self.force, i])
             wp.sim.collide(self.model, curr_state)
             self.integrator.simulate(self.model, curr_state, next_state, self.frame_dt)
-            self.trajectory.update_position(i, curr_state.body_q, 0)
+            self.trajectory.update_data(i, curr_state.body_q, 0)
 
     def step(self):
         self.tape = wp.Tape()

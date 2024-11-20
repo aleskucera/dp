@@ -110,7 +110,7 @@ class BallBounceOptim:
         self.model = ball_world_model(gravity=True)
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
-        # self.integrator = wp.sim.SemiImplicitIntegrator()
+        self.integrator = wp.sim.SemiImplicitIntegrator()
         # self.integrator = XPBDIntegrator(enable_restitution=True, rigid_contact_relaxation=0.2)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
 

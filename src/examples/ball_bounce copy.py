@@ -5,9 +5,10 @@ import warp.optim
 import warp.sim.render
 import matplotlib.pyplot as plt
 
-from sim import *
+import matplotlib
+matplotlib.use("TkAgg")
 
-USD_FILE = "data/output/ball_bounce_simple.usd"
+USD_FILE = "./ball_bounce_simple.usd"
 
 def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     if gravity:
@@ -21,57 +22,6 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     model = builder.finalize(requires_grad=True)
 
     return model
-
-@wp.kernel
-def integrate_ball(
-    curr_body_q: wp.array(dtype=wp.transform),
-    curr_body_qd: wp.array(dtype=wp.spatial_vector),
-    curr_body_f: wp.array(dtype=wp.spatial_vector),
-    next_body_q: wp.array(dtype=wp.transform),
-    next_body_qd: wp.array(dtype=wp.spatial_vector),
-    body_idx: wp.int32,
-    radius: wp.float32,
-    restitution: wp.float32,
-    ground_level: wp.float32,
-    dt: wp.float32
-):
-    # Predict position and velocity with gravity applied
-    pos = wp.transform_get_translation(curr_body_q[body_idx])
-    vel = wp.spatial_bottom(curr_body_qd[body_idx])
-    lin_force = wp.spatial_bottom(curr_body_f[body_idx])
-    next_pos = pos + vel * dt
-    next_vel = vel + wp.vec3(0.0, 0.0, -9.81) * dt + lin_force * dt
-
-    # Ground collision check
-    if next_pos[2] - radius < ground_level:
-        next_pos[2] = ground_level + radius  # Adjust position to rest on ground
-
-        # Reflect velocity for bounce
-        if next_vel[2] < 0.0:
-            next_vel[2] = -next_vel[2] * restitution
-
-    # Write back updated position and velocity
-    next_body_q[body_idx] = wp.transform(next_pos, wp.transform_get_rotation(curr_body_q[body_idx]))
-    next_body_qd[body_idx] = wp.spatial_vector(wp.spatial_top(curr_body_qd[body_idx]), next_vel)
-    
-
-def xpbd_simulate(curr_state: wp.sim.State, next_state: wp.sim.State, dt: float):
-    wp.launch(
-        integrate_ball, 
-        dim=1, 
-        inputs=[
-            curr_state.body_q, 
-            curr_state.body_qd,
-            curr_state.body_f, 
-            next_state.body_q, 
-            next_state.body_qd, 
-            0,  # Body index for the ball
-            0.1,  # Ball radius
-            0.6,  # Restitution coefficient
-            0.0,  # Ground level
-            dt    # Time step
-        ]
-    )
 
 @wp.kernel
 def update_trajectory_kernel(trajectory: wp.array(dtype=wp.vec3), 
@@ -96,7 +46,7 @@ class BallBounceOptim:
         # Simulation and rendering parameters
         self.fps = 30
         self.num_frames = 60
-        self.sim_substeps = 10
+        self.sim_substeps = 20
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
@@ -105,8 +55,7 @@ class BallBounceOptim:
         self.model = ball_world_model(gravity=True)
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
-        # self.integrator = wp.sim.SemiImplicitIntegrator()
-        # self.integrator = XPBDIntegrator(enable_restitution=True, rigid_contact_relaxation=0.2)
+        self.integrator = wp.sim.SemiImplicitIntegrator()
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
 
         self.loss = wp.array([0], dtype=wp.float32, requires_grad=True)
@@ -129,21 +78,20 @@ class BallBounceOptim:
             if i == 0:
                 wp.copy(curr_state.body_f, self.target_force, dest_offset=0, src_offset=0, count=1)
             wp.sim.collide(self.model, curr_state)
-            # self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
-            xpbd_simulate(curr_state, next_state, self.sim_dt)
+            self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
             wp.launch(kernel=update_trajectory_kernel, dim=1, inputs=[self.target_trajectory, curr_state.body_q, i, 0])
 
     def forward(self, force: wp.array):
-        for i in range(self.sim_steps):
-            curr_state = self.states[i]
-            next_state = self.states[i + 1]
-            curr_state.clear_forces()
-            if i == 0:
-                wp.copy(curr_state.body_f, force, dest_offset=0, src_offset=0, count=1)
-            wp.sim.collide(self.model, curr_state)
-            # self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
-            xpbd_simulate(curr_state, next_state, self.sim_dt)
-            wp.launch(kernel=update_trajectory_kernel, dim=1, inputs=[self.trajectory, curr_state.body_q, i, 0])
+        with wp.ScopedTimer("forward"):
+            for i in range(self.sim_steps):
+                curr_state = self.states[i]
+                next_state = self.states[i + 1]
+                curr_state.clear_forces()
+                if i == 0:
+                    wp.copy(curr_state.body_f, force, dest_offset=0, src_offset=0, count=1)
+                wp.sim.collide(self.model, curr_state)
+                self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
+                wp.launch(kernel=update_trajectory_kernel, dim=(1,), inputs=[self.trajectory, curr_state.body_q, i, 0])
 
     def step(self, force: wp.array):
         self.tape = wp.Tape()
@@ -164,9 +112,9 @@ class BallBounceOptim:
         losses = np.zeros_like(forces)
         grads = np.zeros_like(forces)
 
-        for i, f_x in enumerate(forces):
+        for i, fx in enumerate(forces):
             print(f"Iteration {i}")
-            force = wp.array([[0.0, 0.0, 0.0, f_x, 0.0, 0.0]], dtype=wp.spatial_vectorf, requires_grad=True)
+            force = wp.array([[0.0, 0.0, 0.0, fx, 0.0, 0.0]], dtype=wp.spatial_vectorf, requires_grad=True)
             losses[i], grads[i] = self.step(force)
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))

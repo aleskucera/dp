@@ -41,7 +41,7 @@ class Renderer:
     def render_trajectory(self, trajectory: Trajectory):
         self.renderer.register_body(trajectory.name)
 
-        positions = trajectory.data.numpy()
+        positions = trajectory.pos.numpy()
 
         # Render the trajectory
         current_pos = positions[0]

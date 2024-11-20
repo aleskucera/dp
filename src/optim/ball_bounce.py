@@ -62,8 +62,8 @@ class BallBounceOptim:
         self.force = wp.array(random_force(self.time), dtype=wp.vec3f, requires_grad=True)
         self.target_force = wp.array(target_force(self.time), dtype=wp.vec3f)
 
-        self.trajectory = Trajectory("trajectory", self.time, color=BLUE, requires_grad=True)
-        self.target_trajectory = Trajectory("target_trajectory", self.time, color=ORANGE)
+        self.trajectory = Trajectory("trajectory", self.time, render_color=BLUE, requires_grad=True)
+        self.target_trajectory = Trajectory("target_trajectory", self.time, render_color=ORANGE)
 
         self.best_loss = np.inf
         self.best_force = wp.clone(self.force)
@@ -91,7 +91,7 @@ class BallBounceOptim:
                 inputs=[curr_state.particle_f, self.target_force, i])
             wp.sim.collide(self.model, curr_state)
             self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
-            self.target_trajectory.update_position(i, curr_state.particle_q, 0)
+            self.target_trajectory.update_data(i, curr_state.particle_q, 0)
 
         self.plot2d.add_trajectory(self.target_trajectory)
         self.plot3d.add_trajectory(self.target_trajectory)
@@ -106,7 +106,7 @@ class BallBounceOptim:
                 inputs=[curr_state.particle_f, self.force, i])
             wp.sim.collide(self.model, curr_state)
             self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
-            self.trajectory.update_position(i, curr_state.particle_q, 0)
+            self.trajectory.update_data(i, curr_state.particle_q, 0)
 
     def step(self, segment: dict):
         self.tape = wp.Tape()
