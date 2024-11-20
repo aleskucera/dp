@@ -12,70 +12,14 @@ from omegaconf import DictConfig, OmegaConf
 
 from sim import *
 from dp_utils import *
+from optim.loss import add_trajectory_loss
 
 
-OUTPUT_FILE = "data/output/pendulum_warp_optim.usd"
+USD_FILE = "data/output/pendulum_warp_optim.usd"
+PLOT2D_FILE = "data/output/pendulum_warp_optim_2d.mp4"
 
 
-def set_joint_config(cfg: DictConfig, model: Union[wp.sim.Model, wp.sim.ModelBuilder]):
-    q_list = []
-    qd_list = []
-    target_ke_list = []
-    target_kd_list = []
-    axis_mode_list = []
-    joint_info_list = []
-
-    for joint in cfg.robot.joints:
-        q_list.append(joint.q)
-        qd_list.append(joint.qd)
-        target_ke_list.append(joint.target_ke)
-        target_kd_list.append(joint.target_kd)
-        axis_mode_list.append(joint.axis_mode)
-        joint_info_list.append(create_joint_info(joint.name, model))
-
-    set_joint_q(joints=joint_info_list, values=q_list, model=model)
-    set_joint_qd(joints=joint_info_list, values=qd_list, model=model)
-    set_joint_target_ke(joints=joint_info_list, values=target_ke_list, model=model)
-    set_joint_target_kd(joints=joint_info_list, values=target_kd_list, model=model)
-    set_joint_axis_mode(joints=joint_info_list, values=axis_mode_list, model=model)
-
-
-def get_robot_transform(cfg: DictConfig) -> wp.transformf:
-    position = wp.vec3(cfg.robot.position.x, cfg.robot.position.y, cfg.robot.position.z)
-    rotation = wp.quat_rpy(
-        math.radians(cfg.robot.rotation.roll),
-        math.radians(cfg.robot.rotation.pitch),
-        math.radians(cfg.robot.rotation.yaw),
-    )
-    return wp.transform(position, rotation)
-
-
-def pendulum_world_model(cfg: DictConfig) -> wp.sim.Model:
-    builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
-
-    parse_urdf_args = dict(cfg.robot.parse_urdf_args)
-    parse_urdf_args["xform"] = get_robot_transform(cfg)
-    parse_urdf_args["builder"] = builder
-    wp.sim.parse_urdf(**parse_urdf_args)
-    set_joint_config(cfg, builder)
-    builder.add_shape_box(
-        body=-1,
-        pos=wp.vec3(0.0, -0.5, 0.0),
-        hx=1.0,
-        hy=0.25,
-        hz=1.0,
-        ke=1e4,
-        kf=0.0,
-        kd=1e1,
-        mu=0.2,
-    )
-    model = builder.finalize()
-    model.ground = True
-
-    return model
-
-
-class PendulumOptim:
+class PendulumWarpOptim:
     def __init__(self, cfg: DictConfig):
         self.cfg = cfg
 
@@ -88,72 +32,129 @@ class PendulumOptim:
         self.sim_duration = cfg.sim.sim_duration
         self.sim_steps = cfg.sim.num_frames * cfg.sim.sim_substeps
 
-        self.iter = 0
-        self.profiler = {}
-        self.sim_time = 0.0
+        self.model = pendulum_world_model(cfg, wall=True)
+        self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
-        self.use_cuda_graph = wp.get_device().is_cuda
-
-        self.model = pendulum_world_model(cfg)
-        self.init_state = self.model.state()
-
-        # Create the integrator and renderer
-        self.integrator = FeatherstoneIntegrator(self.model)
-        self.renderer = wp.sim.render.SimRenderer(self.model, OUTPUT_FILE, scaling=1.0)
+        self.integrator = wp.sim.FeatherstoneIntegrator(self.model)   
+        self.renderer = Renderer(self.model, self.time, USD_FILE)
 
         self.sphere_body: BodyInfo = create_body_info("pendulum_end", self.model)
+        self.pendulum_end_body: BodyInfo = create_body_info("pendulum_end", self.model)
 
         # ======================== OPTIMIZATION ========================
 
-        self.states = [
-            self.model.state(requires_grad=True) for _ in range(self.sim_steps + 1)
-        ]
+        self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
+        self.target_states = [self.model.state() for _ in range(self.sim_steps + 1)]
+        
+        self.target_ke = wp.array([2.0], dtype=wp.float32, requires_grad=True)
 
-        self.trajectory = wp.empty(self.sim_steps, dtype=wp.vec3f, requires_grad=True)
+        self.trajectory = Trajectory("trajectory", self.time, render_color=BLUE, requires_grad=True)
+        self.target_trajectory = Trajectory("target_trajectory", self.time, render_color=BLUE, requires_grad=True)
 
-        self.fig, self.ax = plt.subplots()
 
+        self.plot2d = Plot2D(("x", "y", "z"), 
+                             val_lims=[(-1, 1), (-1.5, 1.5), (0, 2)],
+                             time_lims=[(0, 2), (0, 2), (0, 2)])
+        
+        self.loss = wp.array([0.0], dtype=wp.float32, requires_grad=True)
+
+    def _reset(self):
+        self.loss = wp.array([0.0], dtype=wp.float32, requires_grad=True)
+    
     def generate_target_trajectory(self):
+        wp.copy(self.model.joint_target_ke, self.target_ke, dest_offset=0, src_offset=0, count=1)
         for i in range(self.sim_steps):
-            self.states[i].clear_forces()
-            wp.sim.collide(self.model, self.states[i])
-            self.integrator.simulate(
-                self.model, self.states[i], self.states[i + 1], self.frame_dt
-            )
+            curr_state = self.target_states[i]
+            next_state = self.target_states[i + 1]
+            curr_state.clear_forces()
+            wp.sim.collide(self.model, curr_state)
+            self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
+            self.target_trajectory.update_data(i, curr_state.body_q, self.pendulum_end_body.idx)
+            
+            if i > 0:
+                self.plot2d.add_trajectory(self.trajectory, i, i)
+        
+        # self.renderer.add_trajectory(self.trajectory)
 
-            update_trajectory(
-                trajectory=self.trajectory,
-                q=self.states[i].body_q,
-                time_step=i,
-                q_idx=self.sphere_body.idx,
-            )
+    def forward(self, ke: wp.array):
+        with wp.ScopedTimer("forward"):
+            wp.copy(self.model.joint_target_ke, ke, dest_offset=0, src_offset=0, count=1)
+            for i in range(self.sim_steps):
+                curr_state = self.states[i]
+                next_state = self.states[i + 1]
+                curr_state.clear_forces()
+                wp.sim.collide(self.model, curr_state)
+                self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
+                self.trajectory.update_data(i, curr_state.body_q, self.pendulum_end_body.idx)
+    
+    def step(self, ke: wp.array):
+        self._reset()
+        
+        self.tape = wp.Tape()
+        with self.tape:
+            self.forward(ke)
+            add_trajectory_loss(self.trajectory, self.target_trajectory, self.loss)
+        self.tape.backward(self.loss)
+        
+        loss = self.loss.numpy()[0]
+        ke_grad = ke.grad.numpy()[0]
+        self.tape.zero()
+        
+        print(f"Loss: {loss}")
+        print(f"Gradient: {ke_grad}")
 
-            if i % self.cfg.sim.sim_substeps == 0:
-                self.sim_time += self.frame_dt
-                self.render(i)
+        return loss, ke_grad
+    
+    def plot_loss(self):
+        kes = np.linspace(0, 4, 50)
+        losses = np.zeros_like(kes)
+        grads = np.zeros_like(kes)
 
-    def render(self, step: int):
-        if self.renderer is None:
-            return
+        for i, ke in enumerate(kes):
+            print(f"Iteration {i}")
+            ke = wp.array([ke], dtype=wp.float32, requires_grad=True)
+            losses[i], grads[i] = self.step(ke)
+        
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
 
-        with wp.ScopedTimer("render"):
-            self.renderer.begin_frame(self.sim_time)
-            self.renderer.render(self.states[step])
+        # Plot the loss curve
+        ax1.plot(kes, losses, label="Loss")
+        ax1.set_xlabel("Force")
+        ax1.set_ylabel("Ke")
+        ax1.set_title("Loss vs Ke")
+        ax1.legend()
 
-            self.renderer.end_frame()
+        # Make sure that that grads are not too large
+        grads = np.clip(grads, -1e4, 1e4)
 
+        # Plot the gradient curve
+        ax2.plot(kes, grads, label="Gradient", color="orange")
+        ax2.set_xlabel("Ke")
+        ax2.set_ylabel("Gradient")
+        ax2.set_title("Gradient vs Ke")
+        ax2.legend()
+
+        plt.suptitle("Loss and Gradient vs Ke")
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.show()
+
+    def save_usd(self):
+        self.renderer.save(self.target_states, fps=30)
+    
+    def animate_2d_plot(self, save_path: str = None):
+        self.plot2d.animate(self.sim_steps, interval=10, save_path=save_path)
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
-def carter_demo(cfg: DictConfig):
+def pendulum_warp_optimization(cfg: DictConfig):
     OmegaConf.register_new_resolver("eval", custom_eval)
     OmegaConf.resolve(cfg)
 
-    model = PendulumOptim(cfg)
+    model = PendulumWarpOptim(cfg)
     model.generate_target_trajectory()
-    model.renderer.save()
-    plot_time_series(ax=model.ax, trajectory=model.trajectory, axis="z")
-    plt.show()
+    model.plot_loss()
+    # model.animate_2d_plot(PLOT2D_FILE)
+    model.save_usd()
 
 
 if __name__ == "__main__":
-    carter_demo()
+    pendulum_warp_optimization()

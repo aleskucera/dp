@@ -39,7 +39,7 @@ def pendulum_world_model(cfg: DictConfig,
                               ke=1e4, kf=0.0, kd=1e2, mu=0.2,
                               has_ground_collision=False)
     
-    model = builder.finalize()
+    model = builder.finalize(requires_grad=True)
     model.ground = True
     return model
 

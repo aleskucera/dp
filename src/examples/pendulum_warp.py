@@ -65,7 +65,7 @@ class PendulumWarpSim:
         self.renderer.add_trajectory(self.trajectory)
 
     def save_usd(self):
-        self.renderer.save(self.states)
+        self.renderer.save(self.states, fps=30)
     
     def animate_2d_plot(self, save_path: str = None):
         self.plot2d.animate(self.sim_steps, interval=10, save_path=save_path)
