@@ -14,6 +14,7 @@ from sympy.physics.mechanics import inertia
 
 from sim import *
 from dp_utils import *
+from optim.loss import add_trajectory_loss
 from xpbd_np.position_correction import apply_positional_correction
 from xpbd_np.utils import multiply_quaternions
 from xpbd.integrator_xpbd import XPBDIntegrator
@@ -258,32 +259,39 @@ class CollisionDemo:
         self.sim_duration = cfg.sim.sim_duration
 
         self.model = box_world_model(gravity=False)
-        self.integrator = XPBDIntegrator(angular_damping=0.0)
+        self.integrator = wp.sim.XPBDIntegrator(angular_damping=0.0)
+        # self.integrator = XPBDIntegrator(angular_damping=0.0)
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
-        self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
+
+        self.target_trajectory = Trajectory("target_trajectory", self.time)
+        self.target_states = [self.model.state() for _ in range(self.sim_steps + 1)]
+        self.target_qd = wp.array([0.0, 0.0, 0.0, -1.0, 0.0, 0.0], dtype=wp.spatial_vector)
 
         self.main_box: BodyInfo = create_body_info("main_box", self.model)
-        self.main_trajectory = Trajectory("box", self.time)
         self.main_colls = np.full((self.sim_steps, self.model.rigid_contact_max, 3), np.nan)
 
         self.box1: BodyInfo = create_body_info("box1", self.model)
         self.box1_trajectory = Trajectory("box1", self.time)
         self.box1_colls = np.full((self.sim_steps, self.model.rigid_contact_max, 3), np.nan)
 
-    def simulate(self):
-        self.main_trajectory.update_data(0, self.states[0].body_q, int(self.main_box.idx))
-        self.box1_trajectory.update_data(0, self.states[0].body_q, int(self.box1.idx))
+        self.trajectory = Trajectory("trajectory", self.time, requires_grad=True)
+        self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
+        self.loss = wp.array([0.0], dtype=wp.float32, requires_grad=True)
 
-        body_qd = self.states[0].body_qd.numpy()
-        body_qd[self.main_box.idx] = np.array([0.0, 0.0, 0.0, -10.0, 0.0, 0.0])
-        body_qd[self.box1.idx] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        self.states[0].body_qd = wp.array(body_qd, dtype=wp.spatial_vector)
+    def _reset(self):
+        self.loss = wp.array([0.0], dtype=wp.float32, requires_grad=True)
+
+    def generate_target_trajectory(self):
+        self.target_trajectory.update_data(0, self.target_states[0].body_q, int(self.main_box.idx))
+        self.box1_trajectory.update_data(0, self.target_states[0].body_q, int(self.box1.idx))
+
+        wp.copy(self.target_states[0].body_qd, self.target_qd, dest_offset=self.main_box.idx, src_offset=0, count=1)
 
         for i in range(self.sim_steps - 1):
-            prev_state = self.states[i]
-            next_state = self.states[i + 1]
+            prev_state = self.target_states[i]
+            next_state = self.target_states[i + 1]
             prev_state.clear_forces()
-            wp.sim.collide(self.model, prev_state, edge_sdf_iter=10)
+            wp.sim.collide(self.model, prev_state)
             self.integrator.simulate(self.model, prev_state, next_state, self.sim_dt)
 
             if self.model.rigid_contact_count.numpy() > 0:
@@ -299,10 +307,68 @@ class CollisionDemo:
             # self.update_velocities(prev_state, next_state)
             # self.solve_velocities(prev_state, next_state)
 
-            self.main_trajectory.update_data(i, next_state.body_q, int(self.main_box.idx))
+            self.target_trajectory.update_data(i, next_state.body_q, int(self.main_box.idx))
             self.box1_trajectory.update_data(i, next_state.body_q, int(self.box1.idx))
 
+    def forward(self, qd: wp.array):
+        self.trajectory.update_data(0, self.states[0].body_q, int(self.main_box.idx))
 
+        wp.copy(self.states[0].body_qd, qd, dest_offset=self.main_box.idx, src_offset=0, count=1)
+        for i in range(self.sim_steps):
+            curr_state = self.states[i]
+            next_state = self.states[i + 1]
+            curr_state.clear_forces()
+            wp.sim.collide(self.model, curr_state)
+            self.integrator.simulate(self.model, curr_state, next_state, self.sim_dt)
+            self.trajectory.update_data(i, next_state.body_q, int(self.main_box.idx))
+
+    def step(self, qd: wp.array):
+        self._reset()
+
+        self.tape = wp.Tape()
+        with self.tape:
+            self.forward(qd)
+            add_trajectory_loss(self.trajectory, self.target_trajectory, self.loss)
+        self.tape.backward(self.loss)
+
+        loss = self.loss.numpy()[0]
+        vx_grad = qd.grad.numpy()[0, 3]
+        self.tape.zero()
+
+        print(f"Loss: {loss}")
+        print(f"Gradient: {vx_grad}")
+        return loss, vx_grad
+
+    def plot_loss(self):
+        vxs = np.linspace(-2, 0, 10)
+        losses = np.zeros_like(vxs)
+        grads = np.zeros_like(vxs)
+
+        for i, vx in enumerate(vxs):
+            print(f"Iteration {i}")
+            qd = wp.array([0.0, 0.0, 0.0, vx, 0.0, 0.0], dtype=wp.spatial_vector, requires_grad=True)
+            losses[i], grads[i] = self.step(qd)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+        ax1.plot(vxs, losses)
+        ax1.set_title("Loss vs. vx")
+        ax1.set_xlabel("vx")
+        ax1.set_ylabel("Loss")
+        ax1.set_title("Loss vs. vx")
+        ax1.legend()
+
+        # Make sure that the grads are not too large
+        grads = np.clip(grads, -1e4, 1e4)
+
+        ax2.plot(vxs, grads)
+        ax2.set_title("Gradient vs. vx")
+        ax2.set_xlabel("vx")
+        ax2.set_ylabel("Gradient")
+        ax2.legend()
+
+        plt.suptitle("Loss and Gradient vs. vx")
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.show()
 
     def update_velocities(self, prev_state: wp.sim.State, next_state: wp.sim.State):
         for b in [self.main_box, self.box1]:
@@ -378,13 +444,11 @@ class CollisionDemo:
             c = np.linalg.norm(d_v)
             if c > 0:
                 n = d_v / c
-                # print(f"Normal Impulse: {c} ({contact_count}")
                 v_a_new, v_b_new, w_a_new, w_b_new, _ = apply_velocity_correction(q_a, q_b, v_a, v_b, w_a, w_b,
                                                                     m_a_inv, m_b_inv, I_a_inv, I_b_inv,
                                                                     r_a, r_b, n, c, 0.0)
 
-            # print(f"v_a_new: {v_a_new}")
-            # print(f"v_b_new: {v_b_new}")
+
             body_qd = next_state.body_qd.numpy()
             body_qd[body_a.idx] = np.concatenate((w_a_new, v_a_new))
             body_qd[body_b.idx] = np.concatenate((w_b_new, v_b_new))
@@ -398,110 +462,14 @@ class CollisionDemo:
         collisions = np.concatenate((collisions0, collisions1), axis=0)
         return collisions
 
-    def resolve_collisions(self, prev_state: wp.sim.State, next_state: wp.sim.State):
-        contact_count = self.model.rigid_contact_count.numpy()[0]
-        contact_shape0 = self.model.rigid_contact_shape0.numpy()
-        contact_shape1 = self.model.rigid_contact_shape1.numpy()
-        contact_normal = self.model.rigid_contact_normal.numpy()
-        contact_point0 = self.model.rigid_contact_point0.numpy()
-        contact_point1 = self.model.rigid_contact_point1.numpy()
-        contact_offset0 = self.model.rigid_contact_offset0.numpy()
-        contact_offset1 = self.model.rigid_contact_offset1.numpy()
-        # print(f"Contact offset0: {contact_offset0}")
-        # print(f"Contact offset1: {contact_offset1}")
-        lambda_n = 0.0
-        lambda_t = 0.0
-
-        for _ in range(5):
-            for i in range(contact_count):
-                shape0 = contact_shape0[i]
-                shape1 = contact_shape1[i]
-                normal = contact_normal[i] * -1
-                r_a = contact_point0[i] + contact_offset0[i]
-                r_b = contact_point1[i] + contact_offset1[i]
-
-                if shape0 == self.main_box.idx:
-                    body_a = self.main_box
-                    body_b = self.box1
-                else:
-                    body_a = self.box1
-                    body_b = self.main_box
-
-                # Get the transformations of the main box and box1
-                x_a0 = prev_state.body_q.numpy()[body_a.idx][:3]
-                q_a0 = prev_state.body_q.numpy()[body_a.idx][3:]
-                x_b0 = prev_state.body_q.numpy()[body_b.idx][:3]
-                q_b0 = prev_state.body_q.numpy()[body_b.idx][3:]
-
-                x_a1 = next_state.body_q.numpy()[body_a.idx][:3]
-                q_a1 = next_state.body_q.numpy()[body_a.idx][3:]
-                x_b1 = next_state.body_q.numpy()[body_b.idx][:3]
-                q_b1 = next_state.body_q.numpy()[body_b.idx][3:]
-
-                m_a_inv = self.model.body_inv_mass.numpy()[body_a.idx]
-                m_b_inv = self.model.body_inv_mass.numpy()[body_b.idx]
-                I_a_inv = self.model.body_inv_inertia.numpy()[body_a.idx]
-                I_b_inv = self.model.body_inv_inertia.numpy()[body_b.idx]
-
-                p_a0 = x_a0 + R.from_quat(q_a0).apply(r_a)
-                p_b0 = x_b0 + R.from_quat(q_b0).apply(r_b)
-                p_a1 = x_a1 + R.from_quat(q_a1).apply(r_a)
-                p_b1 = x_b1 + R.from_quat(q_b1).apply(r_b)
-
-                # Compute the penetration depth
-                depth = (p_a1 - p_b1) @ normal
-                if depth <= 0:
-                    continue
-
-                # Apply positional correction
-                x_a1, x_b1, q_a1, q_b1, lambda_n = apply_positional_correction(x_a1,
-                                                                              x_b1,
-                                                                              q_a1,
-                                                                              q_b1,
-                                                                              m_a_inv,
-                                                                              m_b_inv,
-                                                                              I_a_inv,
-                                                                              I_b_inv,
-                                                                              r_a,
-                                                                              r_b,
-                                                                              normal,
-                                                                              depth,
-                                                                              lambda_n)
-
-                # Compute the relative motion
-                d_p = (p_a1 - p_a0) - (p_b1 - p_b0)
-                tangent = d_p - (d_p @ normal) * normal  # Tangential component
-                tangent_norm = np.linalg.norm(tangent)
-
-                mu = 0.1
-                if lambda_t < mu * lambda_n and tangent_norm > 1e-6:
-                    x_a1, x_b1, q_a1, q_b1, lambda_t = apply_positional_correction(x_a1,
-                                                                                  x_b1,
-                                                                                  q_a1,
-                                                                                  q_b1,
-                                                                                  m_a_inv,
-                                                                                  m_b_inv,
-                                                                                  I_a_inv,
-                                                                                  I_b_inv,
-                                                                                  r_a,
-                                                                                  r_b,
-                                                                                  tangent,
-                                                                                  tangent_norm,
-                                                                                  lambda_t)
-
-                body_q = next_state.body_q.numpy()
-                body_q[body_a.idx] = np.concatenate((x_a1, q_a1))
-                body_q[body_b.idx] = np.concatenate((x_b1, q_b1))
-
-                next_state.body_q = wp.array(body_q, dtype=wp.transform)
-
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def collision_demo(cfg: DictConfig):
     OmegaConf.register_new_resolver("eval", custom_eval)
     OmegaConf.resolve(cfg)
     model = CollisionDemo(cfg)
-    model.simulate()
-    main_box = Box(1.0, 1.0, 1.0, BLUE, model.main_trajectory, model.main_colls)
+    model.generate_target_trajectory()
+    model.plot_loss()
+    main_box = Box(1.0, 1.0, 1.0, BLUE, model.target_trajectory, model.main_colls)
     box1 = Box(1.0, 1.0, 1.0, ORANGE, model.box1_trajectory, model.box1_colls)
     controller = BoxAnimationController([main_box, box1], step=10)
     plt.show()

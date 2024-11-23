@@ -80,51 +80,6 @@ def compute_contact_constraint_delta(
 
     return delta_lambda * relaxation
 
-@wp.kernel
-def apply_body_deltas(
-    q_in: wp.array(dtype=wp.transform),
-    qd_in: wp.array(dtype=wp.spatial_vector),
-    body_com: wp.array(dtype=wp.vec3),
-    body_I: wp.array(dtype=wp.mat33),
-    body_inv_m: wp.array(dtype=float),
-    body_inv_I: wp.array(dtype=wp.mat33),
-    deltas: wp.array(dtype=wp.spatial_vector),
-    constraint_inv_weights: wp.array(dtype=float),
-    dt: float,
-    # outputs
-    q_out: wp.array(dtype=wp.transform),
-    qd_out: wp.array(dtype=wp.spatial_vector),
-):
-    tid = wp.tid()
-    m_inv = body_inv_m[tid]
-    if m_inv == 0.0:
-        q_out[tid] = q_in[tid]
-        qd_out[tid] = qd_in[tid]
-        return
-    I_inv = body_inv_I[tid]
-
-    tf = q_in[tid]
-    delta = deltas[tid]
-
-    x = wp.transform_get_translation(tf)
-    q = wp.transform_get_rotation(tf)
-    dx = m_inv * wp.spatial_bottom(delta)
-    dq = I_inv @ wp.spatial_top(delta)
-
-    # Update the position
-    new_x = x + dx * dt
-
-    # Update the orientation
-    if wp.length(dq) > 1e-4:
-        # Create quaternion from the rotation vector
-        q_delta = wp.quat_from_axis_angle(dq, wp.length(dq) * dt)
-        new_q = wp.normalize(q * q_delta)
-    else:
-        new_q = q
-
-    # Update the transform
-    q_out[tid] = wp.transform(new_x, new_q)
-
 # @wp.kernel
 # def apply_body_deltas(
 #     q_in: wp.array(dtype=wp.transform),
@@ -141,58 +96,103 @@ def apply_body_deltas(
 #     qd_out: wp.array(dtype=wp.spatial_vector),
 # ):
 #     tid = wp.tid()
-#     inv_m = body_inv_m[tid]
-#     if inv_m == 0.0:
+#     m_inv = body_inv_m[tid]
+#     if m_inv == 0.0:
 #         q_out[tid] = q_in[tid]
 #         qd_out[tid] = qd_in[tid]
 #         return
-#     inv_I = body_inv_I[tid]
+#     I_inv = body_inv_I[tid]
 #
 #     tf = q_in[tid]
 #     delta = deltas[tid]
 #
-#     p0 = wp.transform_get_translation(tf)
-#     q0 = wp.transform_get_rotation(tf)
+#     x = wp.transform_get_translation(tf)
+#     q = wp.transform_get_rotation(tf)
+#     dx = m_inv * wp.spatial_bottom(delta)
+#     dq = I_inv @ wp.spatial_top(delta)
 #
-#     weight = 1.0
-#     if constraint_inv_weights:
-#         inv_weight = constraint_inv_weights[tid]
-#         if inv_weight > 0.0:
-#             weight = 1.0 / inv_weight
+#     # Update the position
+#     new_x = x + dx * dt
 #
-#     dp = wp.spatial_bottom(delta) * (inv_m * weight)
-#     dq = wp.spatial_top(delta) * weight
-#     dq = wp.quat_rotate(q0, inv_I * wp.quat_rotate_inv(q0, dq))
+#     # Update the orientation
+#     if wp.length(dq) > 1e-4:
+#         # Create quaternion from the rotation vector
+#         q_delta = wp.quat_from_axis_angle(dq, wp.length(dq) * dt)
+#         new_q = wp.normalize(q * q_delta)
+#     else:
+#         new_q = q
 #
-#     # update orientation
-#     q1 = q0 + 0.5 * wp.quat(dq * dt, 0.0) * q0
-#     q1 = wp.normalize(q1)
-#
-#     # update position
-#     com = body_com[tid]
-#     x_com = p0 + wp.quat_rotate(q0, com)
-#     p1 = x_com + dp * dt
-#     p1 -= wp.quat_rotate(q1, com)
-#
-#     q_out[tid] = wp.transform(p1, q1)
-#
-#     v0 = wp.spatial_bottom(qd_in[tid])
-#     w0 = wp.spatial_top(qd_in[tid])
-#
-#     # update linear and angular velocity
-#     v1 = v0 + dp
-#     # angular part (compute in body frame)
-#     wb = wp.quat_rotate_inv(q0, w0 + dq)
-#     tb = -wp.cross(wb, body_I[tid] * wb)  # coriolis forces
-#     w1 = wp.quat_rotate(q0, wb + inv_I * tb * dt)
-#
-#     # XXX this improves gradient stability
-#     if wp.length(v1) < 1e-4:
-#         v1 = wp.vec3(0.0)
-#     if wp.length(w1) < 1e-4:
-#         w1 = wp.vec3(0.0)
-#
-#     qd_out[tid] = wp.spatial_vector(w1, v1)
+#     # Update the transform
+#     q_out[tid] = wp.transform(new_x, new_q)
+
+@wp.kernel
+def apply_body_deltas(
+    q_in: wp.array(dtype=wp.transform),
+    qd_in: wp.array(dtype=wp.spatial_vector),
+    body_com: wp.array(dtype=wp.vec3),
+    body_I: wp.array(dtype=wp.mat33),
+    body_inv_m: wp.array(dtype=float),
+    body_inv_I: wp.array(dtype=wp.mat33),
+    deltas: wp.array(dtype=wp.spatial_vector),
+    constraint_inv_weights: wp.array(dtype=float),
+    dt: float,
+    # outputs
+    q_out: wp.array(dtype=wp.transform),
+    qd_out: wp.array(dtype=wp.spatial_vector),
+):
+    tid = wp.tid()
+    inv_m = body_inv_m[tid]
+    if inv_m == 0.0:
+        q_out[tid] = q_in[tid]
+        qd_out[tid] = qd_in[tid]
+        return
+    inv_I = body_inv_I[tid]
+
+    tf = q_in[tid]
+    delta = deltas[tid]
+
+    p0 = wp.transform_get_translation(tf)
+    q0 = wp.transform_get_rotation(tf)
+
+    weight = 1.0
+    if constraint_inv_weights:
+        inv_weight = constraint_inv_weights[tid]
+        if inv_weight > 0.0:
+            weight = 1.0 / inv_weight
+
+    dp = wp.spatial_bottom(delta) * (inv_m * weight)
+    dq = wp.spatial_top(delta) * weight
+    dq = wp.quat_rotate(q0, inv_I * wp.quat_rotate_inv(q0, dq))
+
+    # update orientation
+    q1 = q0 + 0.5 * wp.quat(dq * dt, 0.0) * q0
+    q1 = wp.normalize(q1)
+
+    # update position
+    com = body_com[tid]
+    x_com = p0 + wp.quat_rotate(q0, com)
+    p1 = x_com + dp * dt
+    p1 -= wp.quat_rotate(q1, com)
+
+    q_out[tid] = wp.transform(p1, q1)
+
+    v0 = wp.spatial_bottom(qd_in[tid])
+    w0 = wp.spatial_top(qd_in[tid])
+
+    # update linear and angular velocity
+    v1 = v0 + dp
+    # angular part (compute in body frame)
+    wb = wp.quat_rotate_inv(q0, w0 + dq)
+    tb = -wp.cross(wb, body_I[tid] * wb)  # coriolis forces
+    w1 = wp.quat_rotate(q0, wb + inv_I * tb * dt)
+
+    # XXX this improves gradient stability
+    if wp.length(v1) < 1e-4:
+        v1 = wp.vec3(0.0)
+    if wp.length(w1) < 1e-4:
+        w1 = wp.vec3(0.0)
+
+    qd_out[tid] = wp.spatial_vector(w1, v1)
 
 @wp.kernel
 def solve_body_contact_positions(
@@ -297,7 +297,7 @@ def solve_body_contact_positions(
     ang_delta_a = angular_a * lambda_n
     ang_delta_b = angular_b * lambda_n
 
-    wp.printf("Contact %d: %f\n", tid, lambda_n)
+    # wp.printf("Contact %d: %f\n", tid, lambda_n)
     if body_a >= 0:
         wp.atomic_add(deltas, body_a, wp.spatial_vector(ang_delta_a, lin_delta_a))
     if body_b >= 0:
@@ -405,7 +405,7 @@ class XPBDIntegrator(Integrator):
                         device=model.device,
                     )
 
-                    print(f"Body deltas: {body_deltas.numpy()}")
+                    # print(f"Body deltas: {body_deltas.numpy()}")
 
                     body_q, body_qd = self.apply_body_deltas(
                         model, state_in, state_out, body_deltas, dt, rigid_contact_inv_weight

@@ -1,0 +1,57 @@
+experiment: optimization
+stage_path: data/output/carter.usd
+sim:
+  fps: 30
+  frame_dt: ${eval:'1 / ${sim.fps}'}
+  sim_substeps: 0
+  sim_dt: ${eval:'${sim.frame_dt} / ${sim.sim_substeps}'}
+  num_frames: 45
+  sim_duration: ${eval:'${sim.num_frames} * ${sim.frame_dt}'}
+  sim_steps: ${eval:'int(${sim.sim_duration} // ${sim.sim_dt})'}
+robot:
+  name: pendulum
+  position:
+    x: 0.0
+    'y': 0.0
+    z: 1.5
+  rotation:
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+  parse_urdf_args:
+    urdf_filename: ${eval:'os.path.join(dp_utils.DATA_DIR, "robot", "pendulum", "pendulum.urdf")'}
+    builder: null
+    xform: null
+    floating: false
+    base_joint: null
+    density: 1000.0
+    stiffness: 20.0
+    damping: 10.0
+    armature: 0.0
+    contact_ke: 100.0
+    contact_kd: 100.0
+    contact_kf: 10000.0
+    contact_ka: 0.0
+    contact_mu: 0.25
+    contact_restitution: 0.5
+    contact_thickness: 0.1
+    limit_ke: 100.0
+    limit_kd: 10.0
+    joint_limit_lower: 1.0e-06
+    joint_limit_upper: 1000000.0
+    scale: 1.0
+    parse_visuals_as_colliders: false
+    force_show_colliders: false
+    enable_self_collisions: false
+    ignore_inertial_definitions: true
+    ensure_nonstatic_links: true
+    static_link_mass: 0.01
+    collapse_fixed_joints: false
+  joints:
+  - name: base_to_arm
+    q: 1.57
+    qd: 0.0
+    act: 0.0
+    target_ke: 0.4
+    target_kd: 0.4
+    axis_mode: ${eval:'warp.sim.JOINT_MODE_TARGET_VELOCITY'}
