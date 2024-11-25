@@ -62,8 +62,8 @@ class Body:
         self.w_prev = w
 
         self.dt = dt
-        self.lambda_n = 0.0
-        self.lambda_t = 0.0
+        self.lambda_n = torch.tensor([0.0])
+        self.lambda_t = torch.tensor([0.0])
 
         self.restitution = restitution
         self.static_friction = static_friction
@@ -99,13 +99,26 @@ class Body:
     def save_collisions(self, step: int):
         self.collision_history[step] = self.collisions
 
+        self.custom_vectors[step] = self.collisions
+        self.custom_vectors_x[step] = self.x
+        self.custom_vectors_q[step] = self.q
+
     def plot(self, ax: plt.Axes, frame: int):
         x, q, _, _ = self.trajectory.get_state(frame)
         collisions = self.collision_history[frame]
 
+        v = self.custom_vectors[frame]
+        v_x = self.custom_vectors_x[frame]
+        v_q = self.custom_vectors_q[frame]
+
         plot_axis(ax, x, q)
         self.plot_geometry(ax, x, q)
         plot_collisions(ax, x, q, collisions, color='r')
+        # plot_vectors(ax, x, q, v, color='b')
+        #
+        # if self.num_collisions != 0:
+        #     print("Collision detected at frame: ", frame)
+        #     return
 
     def detect_collisions(self):
         self.collisions = torch.full((len(self.coll_vertices), 3), float('nan'))
@@ -136,6 +149,10 @@ class Body:
         t = torque - torch.linalg.cross(self.w, torch.matmul(self.I, self.w))  # coriolis forces
 
         # Linear integration
+        # add_v = torch.tensor([0.0, 0.0, 0.0])
+        # if self.num_collisions > 0:
+        #     add_v = torch.tensor([3.0, 0.0, 0.0])
+
         v_next = self.v + (lin_force + gravity) * self.m_inv * self.dt
         x_next = self.x + v_next * self.dt
 
@@ -245,5 +262,5 @@ class Body:
         self.v += (delta_v_restitution + delta_v_friction) / num_corrections
         self.w += (delta_w_restitution + delta_w_friction) / num_corrections
 
-        self.lambda_n = 0.0
-        self.lambda_t = 0.0
+        self.lambda_n = torch.tensor([0.0])
+        self.lambda_t = torch.tensor([0.0])

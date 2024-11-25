@@ -123,8 +123,6 @@ class Cuboid(Body):
 
         vertices = torch.cat(vertices_list, dim=0)
 
-        print(vertices.shape)
-
         return vertices
 
 
@@ -236,6 +234,6 @@ def simulate_rotation():
     controller.start()
 
 if __name__ == "__main__":
-    # visualize_collision_model()
-    # simulate_fall()
+    visualize_collision_model()
+    simulate_fall()
     simulate_rotation()

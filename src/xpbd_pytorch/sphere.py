@@ -157,8 +157,8 @@ def simulate_fall():
             sphere.correct_collisions()
         sphere.update_velocity()
         sphere.solve_velocity()
-        sphere.save_state(i)
         sphere.save_collisions(i)
+        sphere.save_state(i)
 
     controller = AnimationController(bodies=[sphere],
                                      time=time,
@@ -196,8 +196,8 @@ def simulate_rotation():
             sphere.correct_collisions()
         sphere.update_velocity()
         sphere.solve_velocity()
-        sphere.save_state(i)
         sphere.save_collisions(i)
+        sphere.save_state(i)
 
     controller = AnimationController(bodies=[sphere],
                                      time=time,
@@ -235,8 +235,8 @@ def simulate_roll():
             sphere.correct_collisions()
         sphere.update_velocity()
         sphere.solve_velocity()
-        sphere.save_state(i)
         sphere.save_collisions(i)
+        sphere.save_state(i)
 
     controller = AnimationController(bodies=[sphere],
                                      time=time,

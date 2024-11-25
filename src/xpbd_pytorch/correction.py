@@ -67,7 +67,7 @@ def dynamic_friction_delta(q: torch.Tensor,
                    I_inv: torch.Tensor,
                    dt: float,
                    dynamic_friction: float,
-                   lambda_n: float):
+                   lambda_n: torch.Tensor):
     # Compute the relative velocity of the contact point in the world frame
     v_rel = v + rotate_vector(torch.linalg.cross(w, r), q)
 
@@ -77,7 +77,7 @@ def dynamic_friction_delta(q: torch.Tensor,
     t = v_t / v_t_magnitude
 
     # Compute the change of velocity due to the friction (now infinite friction)
-    coulomb_friction = torch.abs(torch.tensor(dynamic_friction * lambda_n / dt))
+    coulomb_friction = torch.abs(dynamic_friction * lambda_n / dt)
     delta_v_friction = - v_t #* torch.min(coulomb_friction, v_t_magnitude) / v_t_magnitude
 
     # Compute the impulse due to the friction in the world frame

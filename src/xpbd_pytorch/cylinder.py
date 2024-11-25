@@ -328,13 +328,13 @@ def simulate_rolling():
 
     controller = AnimationController(bodies=[cylinder],
                                      time=time,
-                                     x_lims=(-3, 5),
-                                     y_lims=(-3, 3),
-                                     z_lims=(-1, 5))
+                                     x_lims=(-1-1, 5+1),
+                                     y_lims=(-3-1, 3+1),
+                                     z_lims=(-1-1, 5+1))
     controller.start()
 
 if __name__ == "__main__":
     visualize_collision_model()
-    # simulate_fall()
-    # simulate_rotation()
-    # simulate_rolling()
+    simulate_fall()
+    simulate_rotation()
+    simulate_rolling()
