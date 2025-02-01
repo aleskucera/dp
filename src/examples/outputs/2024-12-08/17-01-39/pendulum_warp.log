@@ -1,0 +1,2 @@
+[2024-12-08 17:01:41,799][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2024-12-08 17:01:41,800][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 800x1800 -pix_fmt rgba -framerate 100 -loglevel error -i pipe: -vcodec h264 -pix_fmt yuv420p -y data/output/pendulum_warp_2d.mp4

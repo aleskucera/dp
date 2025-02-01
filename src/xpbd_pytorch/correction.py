@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import torch
 from setuptools.command.rotate import rotate
 
@@ -5,23 +7,28 @@ from xpbd_pytorch.quat import *
 from xpbd_pytorch.utils import *
 
 import matplotlib
+
 matplotlib.use('TkAgg')
 
+
 def numerical_angular_velocity(q: torch.Tensor, q_prev: torch.Tensor, dt: float):
-    q_prev_inv = quaternion_conjugate(q_prev)
-    q_rel = quaternion_multiply(q_prev_inv, q)
+    q_prev_inv = quat_inv(q_prev)
+    q_rel = quat_mul(q_prev_inv, q)
     omega = 2 * torch.tensor([q_rel[1], q_rel[2], q_rel[3]]) / dt
     if q_rel[0] < 0:
         omega = -omega
     return omega
 
+
 def numerical_linear_velocity(x: torch.Tensor, x_prev: torch.Tensor, dt: float):
     return (x - x_prev) / dt
+
 
 def velocity_update(x: torch.Tensor, x_prev: torch.Tensor, q: torch.Tensor, q_prev: torch.Tensor, dt: float):
     v = numerical_linear_velocity(x, x_prev, dt)
     w = numerical_angular_velocity(q, q_prev, dt)
     return v, w
+
 
 def restitution_delta(q: torch.Tensor,
                       v: torch.Tensor,
@@ -52,22 +59,23 @@ def restitution_delta(q: torch.Tensor,
     # Compute the impulse due to the restitution in the world frame
     nb = rotate_vector_inverse(n, q)  # Rotate the normal to the body frame
     J_restitution = delta_v_restitution / (
-                m_inv + torch.dot(torch.linalg.cross(I_inv @ torch.linalg.cross(r, nb), r), nb))
+            m_inv + torch.dot(torch.linalg.cross(I_inv @ torch.linalg.cross(r, nb), r), nb))
     dv = J_restitution * m_inv
     dw = I_inv @ torch.linalg.cross(r, rotate_vector_inverse(J_restitution, q))
 
     return dv, dw
 
+
 def dynamic_friction_delta(q: torch.Tensor,
-                   v: torch.Tensor,
-                   w: torch.Tensor,
-                   r: torch.Tensor,
-                   n: torch.Tensor,
-                   m_inv: float,
-                   I_inv: torch.Tensor,
-                   dt: float,
-                   dynamic_friction: float,
-                   lambda_n: torch.Tensor):
+                           v: torch.Tensor,
+                           w: torch.Tensor,
+                           r: torch.Tensor,
+                           n: torch.Tensor,
+                           m_inv: float,
+                           I_inv: torch.Tensor,
+                           dt: float,
+                           dynamic_friction: float,
+                           lambda_n: torch.Tensor):
     # Compute the relative velocity of the contact point in the world frame
     v_rel = v + rotate_vector(torch.linalg.cross(w, r), q)
 
@@ -78,16 +86,16 @@ def dynamic_friction_delta(q: torch.Tensor,
 
     # Compute the change of velocity due to the friction (now infinite friction)
     coulomb_friction = torch.abs(dynamic_friction * lambda_n / dt)
-    delta_v_friction = - v_t #* torch.min(coulomb_friction, v_t_magnitude) / v_t_magnitude
+    delta_v_friction = - v_t  # * torch.min(coulomb_friction, v_t_magnitude) / v_t_magnitude
 
     # Compute the impulse due to the friction in the world frame
     tb = rotate_vector_inverse(t, q)  # Rotate the tangent to the body frame
-    J_friction = delta_v_friction / (
-                m_inv + torch.dot(torch.linalg.cross(I_inv @ torch.linalg.cross(r, tb), r), tb))
+    J_friction = delta_v_friction / (m_inv + torch.dot(torch.linalg.cross(I_inv @ torch.linalg.cross(r, tb), r), tb))
     dv = J_friction * m_inv
     dw = I_inv @ torch.linalg.cross(r, rotate_vector_inverse(J_friction, q))
 
     return dv, dw
+
 
 def position_delta(q: torch.Tensor,
                    r: torch.Tensor,
@@ -99,7 +107,7 @@ def position_delta(q: torch.Tensor,
 
     nb = rotate_vector_inverse(n, q)
     d_lambda = - c / (m_inv + torch.dot(torch.linalg.cross(I_inv @ torch.linalg.cross(r, nb), r), nb))
-    
+
     p = d_lambda * n
     pb = d_lambda * nb
 
@@ -107,43 +115,153 @@ def position_delta(q: torch.Tensor,
 
     w = I_inv @ torch.linalg.cross(r, pb)
     w_quat = torch.cat([torch.tensor([0.0]), w], dim=0)
-    dq = 0.5 * quaternion_multiply(q, w_quat)
+    dq = 0.5 * quat_mul(q, w_quat)
 
     return dx, dq, d_lambda
 
-# def velocity_solve(q: torch.Tensor, v: torch.Tensor, w: torch.Tensor, r: torch.Tensor, n: torch.Tensor, m_inv: float, I_inv: torch.Tensor, restitution: float):
-#     dv = torch.zeros(3)
-#     dw = torch.zeros(3)
+
+def positional_delta(x_a: torch.Tensor,
+                     x_b: torch.Tensor,
+                     q_a: torch.Tensor,
+                     q_b: torch.Tensor,
+                     r_a: torch.Tensor,
+                     r_b: torch.Tensor,
+                     m_a_inv: float,
+                     m_b_inv: float,
+                     I_a_inv: torch.Tensor,
+                     I_b_inv: torch.Tensor) -> Tuple[
+    torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    dx_a = torch.zeros(3)
+    dx_b = torch.zeros(3)
+    dq_a = torch.zeros(4)
+    dq_b = torch.zeros(4)
+    d_lambda = torch.tensor(0.0)
+
+    delta_x = rotate_vector(r_a, q_a) + x_a - rotate_vector(r_b, q_b) - x_b
+
+    c = torch.norm(delta_x)
+    if c < 1e-6:
+        return dx_a, dx_b, dq_a, dq_b, d_lambda
+
+    n = delta_x / c
+
+    n_a = rotate_vector_inverse(n, q_a)
+    n_b = rotate_vector_inverse(n, q_b)
+
+    weight_a = m_a_inv + torch.dot(torch.linalg.cross(I_a_inv @ torch.linalg.cross(r_a, n_a), r_a), n_a)
+    weight_b = m_b_inv + torch.dot(torch.linalg.cross(I_b_inv @ torch.linalg.cross(r_b, n_b), r_b), n_b)
+
+    d_lambda = - c / (weight_a + weight_b)
+
+    p = d_lambda * n
+    pb = d_lambda * n_b
+
+    # Positional correction
+    dx_a = p * m_a_inv
+    dx_b = - p * m_b_inv
+
+    # Rotational correction
+    w_a = I_a_inv @ torch.linalg.cross(r_a, p)
+    w_a_quat = torch.cat([torch.tensor([0.0]), w_a], dim=0)
+    dq_a = 0.5 * quat_mul(q_a, w_a_quat)
+
+    w_b = I_b_inv @ torch.linalg.cross(r_b, pb)
+    w_b_quat = torch.cat([torch.tensor([0.0]), w_b], dim=0)
+    dq_b = - 0.5 * quat_mul(q_b, w_b_quat)
+
+    return dx_a, dx_b, dq_a, dq_b, d_lambda
+
+
+# def angular_delta(q_a: torch.Tensor,
+#                   q_b: torch.Tensor,
+#                   I_a_inv: torch.Tensor,
+#                   I_b_inv: torch.Tensor,
+#                   delta_q: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+#     dq_a = torch.zeros(4)
+#     dq_b = torch.zeros(4)
 #
-#     # Compute the relative velocity of the contact point in the world frame
-#     v_rel = v + rotate_vector_inverse(torch.linalg.cross(w, r), q)
+#     rot = quat_to_rotvec(delta_q)
 #
-#     # Compute the normal component of the relative velocity
-#     v_n_magnitude = torch.dot(v_rel, n)
-#     v_n = v_n_magnitude * n
+#     theta = torch.norm(rot)
+#     print(f"Theta: {theta}")
+#     if theta < 1e-4:
+#         return q_a, q_b
 #
-#     # Compute the tangent component of the relative velocity
-#     v_t = v_rel - v_n
-#     v_t_magnitude = torch.norm(v_t)
-#     t = v_t / v_t_magnitude
+#     n = rot / theta
 #
-#     nb = rotate_vector_inverse(n, q)  # Rotate the normal to the body frame
-#     tb = rotate_vector_inverse(t, q)  # Rotate the tangent to the body frame
+#     n_a = rotate_vector_inverse(n, q_a)
+#     n_b = rotate_vector_inverse(n, q_b)
 #
-#     # Compute the change of velocity due to the restitution
-#     delta_v_restitution = - (1 + restitution) * v_n
+#     weight_a = n_a @ I_a_inv @ n_a
+#     weight_b = n_b @ I_b_inv @ n_b
+#     weight_sum = weight_a + weight_b
 #
-#     # Compute the impulse due to the restitution in the world frame
-#     J_restitution = delta_v_restitution / (m_inv + torch.dot(torch.linalg.cross(I_inv @ torch.linalg.cross(r, nb), r), nb))
-#     dv += J_restitution * m_inv
-#     dw += I_inv @ torch.linalg.cross(r, rotate_vector_inverse(J_restitution, q))
+#     if torch.abs(weight_sum) < 1e-6:
+#         return dq_a, dq_b
 #
-#     # Compute the change of velocity due to the friction (now infinite friction)
-#     delta_v_friction = - 0.1 * v_t
+#     d_lambda = theta / weight_sum
 #
-#     # Compute the impulse due to the friction in the world frame
-#     J_friction = delta_v_friction / (m_inv + torch.dot(torch.linalg.cross(I_inv @ torch.linalg.cross(r, tb), r), tb))
-#     dv += J_friction * m_inv
-#     dw += I_inv @ torch.linalg.cross(r, rotate_vector_inverse(J_friction, q))
+#     theta_a = d_lambda * I_a_inv @ n_a
+#     theta_b = - d_lambda * I_b_inv @ n_b
 #
-#     return dv, dw
+#     q_a_correction = rotvec_to_quat(theta_a * n_a)
+#     q_b_correction = rotvec_to_quat(theta_b * n_b)
+#
+#     # q_a_correction = torch.cat([torch.tensor([0.0]), theta_a * n], dim=0)
+#     # q_b_correction = torch.cat([torch.tensor([0.0]), theta_b * n], dim=0)
+#
+#     dq_a = quat_mul(q_a_correction, q_a)
+#     dq_b = quat_mul(q_b_correction, q_b)
+#
+#     # dq_a = 0.5 * q_a_correction
+#     # dq_b = 0.5 * q_b_correction
+#     return dq_a, dq_b
+
+
+def angular_delta(u_a: torch.Tensor, u_b: torch.Tensor,
+                  q_a: torch.Tensor, q_b: torch.Tensor,
+                  I_a_inv: torch.Tensor, I_b_inv: torch.Tensor):
+    # Normalize the u_a and u_b vectors
+    u_a = u_a / torch.linalg.norm(u_a)
+    u_b = u_b / torch.linalg.norm(u_b)
+
+    # Rotate the vectors to the world frame
+    u_a_w = rotate_vector(u_a, q_a)
+    u_b_w = rotate_vector(u_b, q_b)
+
+    rot_vector = torch.linalg.cross(u_a_w, u_b_w)
+    theta = torch.linalg.norm(rot_vector)
+
+    if theta < 1e-6:
+        return torch.zeros(4), torch.zeros(4)
+
+    n = rot_vector / theta
+
+    n_a = rotate_vector_inverse(n, q_a)
+    n_b = rotate_vector_inverse(n, q_b)
+
+    w1 = n_a @ I_a_inv @ n_a
+    w2 = n_a @ I_b_inv @ n_b
+    w = w1 + w2
+
+    theta_a = theta * w1 / w
+    theta_b = - theta * w2 / w
+
+    # q_a_correction = rotvec_to_quat(theta_a * n_a)
+    # q_b_correction = rotvec_to_quat(theta_b * n_b)
+
+    q_a_correction = torch.cat([torch.tensor([0.0]), theta_a * n_a], dim=0)
+    q_b_correction = torch.cat([torch.tensor([0.0]), theta_b * n_b], dim=0)
+    # q_a_new = quat_mul(q_a, q_a_correction)
+    # q_b_new = quat_mul(q_b, q_b_correction)
+
+    dq_a = 0.5 * quat_mul(q_a, q_a_correction)
+    dq_b = 0.5 * quat_mul(q_b, q_b_correction)
+
+    return dq_a, dq_b
+
+# def hinge_delta(body_a: Body, body_b: Body,
+#                 r_a: torch.Tensor, r_b: torch.Tensor,
+#                 u_a: torch.Tensor, u_b: torch.Tensor):
+#     pass
+

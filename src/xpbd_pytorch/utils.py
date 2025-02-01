@@ -1,9 +1,57 @@
-from typing import Union
+from typing import Union, List
+from dataclasses import dataclass
 
 import torch
 import matplotlib.pyplot as plt
 
 from xpbd_pytorch.quat import rotate_vector
+from xpbd_pytorch.constants import *
+
+
+@dataclass
+class Collision:
+    point: torch.Tensor
+    normal: torch.Tensor
+
+
+@dataclass
+class GlobalVector:
+    """
+    Represents a vector in global (world) coordinates.
+    This class is primarily used for plotting purposes and defines a vector by its:
+
+    - Origin: The starting point of the vector in global coordinates.
+    - Destination: The ending point of the vector in global coordinates.
+
+    Attributes:
+        origin (torch.Tensor): A 3D point representing the starting position in global coordinates.
+        destination (torch.Tensor): A 3D point representing the ending position in global coordinates.
+    """
+    origin: torch.Tensor
+    destination: torch.Tensor
+
+
+@dataclass
+class LocalVector:
+    """
+    Represents a vector in local coordinates.
+    This class is used for plotting and includes information about the vector's:
+
+    - r: The vector itself in local coordinates.
+    - x: The translation of the local coordinate frame relative to the global (world) coordinates.
+    - q: The rotation of the local coordinate frame relative to the global (world) coordinates.
+    - color: The color of the vector when plotted.
+
+    Attributes:
+        r (torch.Tensor): A vector in local coordinate space.
+        x (torch.Tensor): The translation of the local frame with respect to the global frame.
+        q (torch.Tensor): The quaternion representing the rotation of the local frame with respect to the global frame.
+        color (Union[str, tuple]): The color of the vector when plotted.
+    """
+    r: torch.Tensor
+    x: torch.Tensor
+    q: torch.Tensor
+    color: Union[str, tuple] = ORANGE
 
 
 def plot_axis(ax: plt.Axes, x: torch.Tensor, q: torch.Tensor):
@@ -23,17 +71,13 @@ def plot_axis(ax: plt.Axes, x: torch.Tensor, q: torch.Tensor):
 def plot_collisions(ax: plt.Axes,
                     x: torch.tensor,
                     q: torch.tensor,
-                    collisions: torch.tensor,
+                    collisions: List[Collision],
                     color: Union[str, tuple] = 'r'):
-    if torch.isnan(collisions).all():
-        return
-
     for collision in collisions:
-        if torch.isnan(collision).all():
-            continue
+        r = collision.point
 
         # Transform collision point to world coordinates
-        c = rotate_vector(collision, q) + x
+        c = rotate_vector(r, q) + x
 
         # Plot collision point
         ax.scatter(c[0], c[1], c[2], c=color, marker='x')
@@ -65,48 +109,16 @@ def plot_box_geometry(ax: plt.Axes,
         start, end = rotated_corners[edge[0]], rotated_corners[edge[1]]
         ax.plot([start[0], end[0]], [start[1], end[1]], [start[2], end[2]], color=color)
 
-
-# def plot_vectors(ax: plt.Axes, x: torch.Tensor, q: torch.Tensor, vectors: torch.Tensor, color: Union[str, tuple] = 'r'):
-#     if torch.isnan(vectors).all():
-#         return
-#
-#     for vector in vectors:
-#         if torch.isnan(vector).all():
-#             continue
-#
-#         v = rotate_vector(vector, q) + x
-#         ax.scatter(v[0], v[1], v[2], c=color, marker='x', s=100)
-#
-#         # vector_world = vector
-#         # ax.quiver(x[0], x[1], x[2], vector_world[0], vector_world[1], vector_world[2], color=color)
-
-def plot_vectors_global(ax: plt.Axes, x1: torch.Tensor, x2: torch.Tensor, color: Union[str, tuple] = 'r'):
-    """Plot vectors in the global frame.
-
-    Args:
-        ax (plt.Axes): The matplotlib axes to plot on.
-        x1 (torch.Tensor): The starting point of the vectors with shape (N, 3), where N is the number of vectors.
-        x2 (torch.Tensor): The ending point of the vectors with shape (N, 3), where N is the number of vectors.
-        color (Union[str, tuple], optional): The color of the vectors. Defaults to 'r'.
-    """
-    if torch.isnan(x1).all() or torch.isnan(x2).all():
-        return
-
+def plot_vectors(ax: plt.Axes, vectors: Union[List[LocalVector], List[GlobalVector]], color: Union[str, tuple] = 'r'):
     for vector in vectors:
-        if torch.isnan(vector).all():
-            continue
+        if isinstance(vector, LocalVector):
+            v = rotate_vector(vector.r, vector.q)
+            ax.quiver(vector.x[0], vector.x[1], vector.x[2], v[0], v[1], v[2], color=vector.color)
+        elif isinstance(vector, GlobalVector):
+            print(f"Origin: {vector.origin}, Destination: {vector.destination}")
+            dv = vector.destination - vector.origin
+            ax.quiver(vector.origin[0], vector.origin[1], vector.origin[2],
+                        dv[0], dv[1], dv[2], color=color)
+        else:
+            raise ValueError("Invalid vector type. Must be either LocalVector or GlobalVector.")
 
-        ax.quiver(x[0], x[1], x[2], vector[0], vector[1], vector[2], color=color)
-
-
-def plot_vectors_local(ax: plt.Axes, x: torch.Tensor, q: torch.Tensor, vectors: torch.Tensor,
-                       color: Union[str, tuple] = 'r'):
-    if torch.isnan(vectors).all():
-        return
-
-    for vector in vectors:
-        if torch.isnan(vector).all():
-            continue
-
-        v = rotate_vector(vector, q)
-        ax.quiver(x[0], x[1], x[2], v[0], v[1], v[2], color=color)

@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from xpbd_pytorch.quat import numerical_angular_velocity, quaternion_multiply
+from xpbd_pytorch.quat import numerical_angular_velocity, quat_mul
 
 class TestNumericalAngularVelocity:
     @pytest.mark.parametrize(
@@ -44,7 +44,7 @@ class TestNumericalAngularVelocity:
         q_relative = torch.from_numpy(R.from_rotvec(axis * angle).as_quat()).type(torch.float32)
         q_relative = torch.tensor([q_relative[3], q_relative[0], q_relative[1], q_relative[2]])  # [w, x, y, z]
 
-        q = quaternion_multiply(q_relative, q_prev)  # Final rotation
+        q = quat_mul(q_relative, q_prev)  # Final rotation
 
         # Compute the numerical angular velocity
         result = numerical_angular_velocity(q, q_prev, dt)

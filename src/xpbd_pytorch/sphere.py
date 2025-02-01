@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 from xpbd_pytorch.body import Body
 from xpbd_pytorch.quat import rotate_vector
-from xpbd_pytorch.animate import AnimationController
+from xpbd_pytorch.animation import AnimationController
 
 TOP_COLOR = (1.0, 0.4980392156862745, 0.054901960784313725)
 BOTTOM_COLOR = (0.17254901960784313, 0.6274509803921569, 0.17254901960784313)
@@ -13,8 +13,6 @@ SURFACE_COLOR = (0.12156862745098039, 0.4666666666666667, 0.7058823529411765)
 
 class Sphere(Body):
     def __init__(self,
-                 dt: float,
-                 sim_time: torch.Tensor,
                  x: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]),
                  q: torch.Tensor = torch.tensor([1.0, 0.0, 0.0, 0.0]),
                  v: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]),
@@ -30,7 +28,7 @@ class Sphere(Body):
         self.radius = radius
         self.n_collision_points = n_collision_points
 
-        super().__init__(x=x, q=q, v=v, w=w, dt=dt, sim_time=sim_time,
+        super().__init__(x=x, q=q, v=v, w=w,
                          m=m, I=I, restitution=restitution,
                          static_friction=static_friction,
                          dynamic_friction=dynamic_friction,
@@ -137,9 +135,7 @@ def simulate_fall():
 
     num_pos_iters = 2
 
-    sphere = Sphere(dt=dt,
-                        sim_time=time,
-                        x=torch.tensor([0.0, 0.0, 3.0]),
+    sphere = Sphere(x=torch.tensor([0.0, 0.0, 3.0]),
                         q=torch.tensor([1.0, 0.0, 0.0, 0.0]),
                         v=torch.tensor([0.0, 0.0, 0.0]),
                         w=torch.tensor([1.0, 0.0, 0.0]),
@@ -176,9 +172,7 @@ def simulate_rotation():
 
     num_pos_iters = 2
 
-    sphere = Sphere(dt=dt,
-                        sim_time=time,
-                        x=torch.tensor([0.0, 0.0, 2.1]),
+    sphere = Sphere(x=torch.tensor([0.0, 0.0, 2.1]),
                         q=torch.tensor([1.0, 0.0, 0.0, 0.0]),
                         v=torch.tensor([0.0, 0.0, 0.0]),
                         w=torch.tensor([0.0, 0.0, 3.0]),
@@ -189,15 +183,8 @@ def simulate_rotation():
                         static_friction=0.4,
                         dynamic_friction=1.0)
 
-    for i in range(n_frames):
-        sphere.integrate()
-        sphere.detect_collisions()
-        for j in range(num_pos_iters):
-            sphere.correct_collisions()
-        sphere.update_velocity()
-        sphere.solve_velocity()
-        sphere.save_collisions(i)
-        sphere.save_state(i)
+    sphere.simulate(n_frames, time_len)
+
 
     controller = AnimationController(bodies=[sphere],
                                      time=time,
@@ -215,9 +202,7 @@ def simulate_roll():
 
     num_pos_iters = 2
 
-    sphere = Sphere(dt=dt,
-                        sim_time=time,
-                        x=torch.tensor([0.0, 0.0, 2.1]),
+    sphere = Sphere(x=torch.tensor([0.0, 0.0, 2.1]),
                         q=torch.tensor([1.0, 0.0, 0.0, 0.0]),
                         v=torch.tensor([0.0, 0.0, 0.0]),
                         w=torch.tensor([0.0, 5.0, 0.0]),
@@ -228,15 +213,7 @@ def simulate_roll():
                         static_friction=0.4,
                         dynamic_friction=1.0)
 
-    for i in range(n_frames):
-        sphere.integrate()
-        sphere.detect_collisions()
-        for j in range(num_pos_iters):
-            sphere.correct_collisions()
-        sphere.update_velocity()
-        sphere.solve_velocity()
-        sphere.save_collisions(i)
-        sphere.save_state(i)
+    sphere.simulate(n_frames, time_len)
 
     controller = AnimationController(bodies=[sphere],
                                      time=time,
@@ -247,6 +224,6 @@ def simulate_roll():
 
 if __name__ == "__main__":
     # visualize_collision_model()
-    # simulate_fall()
-    # simulate_rotation()
-    simulate_roll()
+    simulate_fall()
+    simulate_rotation()
+    # simulate_roll()

@@ -1,11 +1,12 @@
+from typing import List, Dict
+from dataclasses import dataclass
+
 import torch
 import matplotlib.pyplot as plt
-from torchgen.gen import static_dispatch_extra_headers
 
 from xpbd_pytorch.quat import *
 from xpbd_pytorch.correction import *
 from xpbd_pytorch.utils import *
-
 
 class Trajectory:
     def __init__(self, time: torch.Tensor):
@@ -30,8 +31,6 @@ class Trajectory:
 
 class Body:
     def __init__(self,
-                 dt: float,
-                 sim_time: torch.Tensor,
                  x: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]),
                  q: torch.Tensor = torch.tensor([1.0, 0.0, 0.0, 0.0]),
                  v: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]),
@@ -61,7 +60,7 @@ class Body:
         self.v_prev = v
         self.w_prev = w
 
-        self.dt = dt
+        self.dt = None
         self.lambda_n = torch.tensor([0.0])
         self.lambda_t = torch.tensor([0.0])
 
@@ -73,16 +72,23 @@ class Body:
 
         self.coll_vertices = self._create_collision_vertices()
 
+        self.trajectory = None
+
+        self.step = 0
+
         self.num_collisions = 0
-        self.collisions = torch.full((len(self.coll_vertices), 3), float('nan'))
-        self.coll_normals = torch.full((len(self.coll_vertices), 3), float('nan'))
+        self.collisions: List[Collision] = []
+        self.collision_history: Dict[int, List[Collision]] = {}
 
-        self.trajectory = Trajectory(sim_time)
-        self.collision_history = torch.full((len(sim_time), len(self.coll_vertices), 3), float('nan'))
+        self.vector_history: Dict[int, List[LocalVector]] = {}
 
-        self.custom_vectors = torch.full((len(sim_time), len(self.coll_vertices), 3), float('nan'))
-        self.custom_vectors_x = torch.full((len(sim_time), len(self.coll_vertices), 3), float('nan'))
-        self.custom_vectors_q = torch.full((len(sim_time), len(self.coll_vertices), 4), float('nan'))
+        self.dx_collision = torch.zeros(3)
+        self.dq_collision = torch.zeros(4)
+        self.dx_friction = torch.zeros(3)
+        self.dq_friction = torch.zeros(4)
+        self.dx_hinge = torch.zeros(3)
+        self.dq_hinge = torch.zeros(4)
+
 
     def _default_moment_of_inertia(self):
         raise NotImplementedError
@@ -94,35 +100,35 @@ class Body:
         raise NotImplementedError
 
     def save_state(self, step: int):
+        if self.trajectory is None:
+            raise ValueError("Trajectory is not initialized")
         self.trajectory.add_state(self.x, self.q, self.v, self.w, step)
 
     def save_collisions(self, step: int):
         self.collision_history[step] = self.collisions
 
-        self.custom_vectors[step] = self.collisions
-        self.custom_vectors_x[step] = self.x
-        self.custom_vectors_q[step] = self.q
-
     def plot(self, ax: plt.Axes, frame: int):
         x, q, _, _ = self.trajectory.get_state(frame)
-        collisions = self.collision_history[frame]
 
-        v = self.custom_vectors[frame]
-        v_x = self.custom_vectors_x[frame]
-        v_q = self.custom_vectors_q[frame]
+        # Check if the frame is in collisions
+        if frame in self.collision_history:
+            collisions = self.collision_history[frame]
+        else:
+            collisions = []
+
+        if frame in self.vector_history:
+            vectors = self.vector_history[frame]
+        else:
+            vectors = []
 
         plot_axis(ax, x, q)
         self.plot_geometry(ax, x, q)
         plot_collisions(ax, x, q, collisions, color='r')
-        # plot_vectors(ax, x, q, v, color='b')
-        #
-        # if self.num_collisions != 0:
-        #     print("Collision detected at frame: ", frame)
-        #     return
+        plot_vectors(ax, vectors, color='b')
 
     def detect_collisions(self):
-        self.collisions = torch.full((len(self.coll_vertices), 3), float('nan'))
-        self.coll_normals = torch.full((len(self.coll_vertices), 3), float('nan'))
+        self.collisions = []
+        self.vector_history[self.step] = []
 
         ground_normal = torch.tensor([0., 0., -1.])
 
@@ -135,11 +141,13 @@ class Body:
         # Store the number of collisions
         self.num_collisions = int(below_ground.sum())
 
-        # Store collision points in local coordinates
-        self.collisions[below_ground] = self.coll_vertices[below_ground]
+        for vertex in self.coll_vertices[below_ground]:
+            self.collisions.append(Collision(vertex, ground_normal))
 
-        # Store ground normal for all collision points
-        self.coll_normals[below_ground] = ground_normal
+            # vertex_world = rotate_vector(vertex, self.q) + self.x
+            # self.vector_history[self.step].append(LocalVector(rotate_vector_inverse(ground_normal, self.q), vertex_world, self.q))
+
+        self.collision_history[self.step] = self.collisions
 
     def integrate(self,
                   lin_force: torch.Tensor = torch.zeros(3),
@@ -161,7 +169,7 @@ class Body:
 
         # Quaternion integration using first-order approximation
         w_quat = torch.cat([torch.tensor([0.0]), w_next], dim=0)
-        q_next = self.q + 0.5 * quaternion_multiply(self.q, w_quat) * self.dt
+        q_next = self.q + 0.5 * quat_mul(self.q, w_quat) * self.dt
         q_next = q_next / torch.norm(q_next)  # normalize quaternion
 
         # Save previous state
@@ -176,6 +184,44 @@ class Body:
         self.v = v_next
         self.w = w_next
 
+    def collision_delta(self):
+        for collision in self.collisions:
+            r, n = collision.point, collision.normal
+
+            # Get the depth of the collision (correction magnitude)
+            r_a_w = rotate_vector(r, self.q) + self.x
+            r_b_w = torch.tensor([r_a_w[0], r_a_w[1], 0.0])
+
+            x_a, x_b = self.x, r_b_w
+            q_a, q_b = self.q, ROT_IDENTITY
+            r_a, r_b = r, torch.zeros(3)
+            m_a_inv, m_b_inv = self.m_inv, 0.0
+            I_a_inv, I_b_inv = self.I_inv, torch.zeros((3, 3))
+
+            dx_collision, _, dq_collision, _, d_lambda = positional_delta(x_a, x_b,
+                                                                    q_a, q_b,
+                                                                    r_a, r_b,
+                                                                    m_a_inv, m_b_inv,
+                                                                    I_a_inv, I_b_inv)
+            self.lambda_n += d_lambda
+            self.dx_collision += dx_collision
+            self.dq_collision += dq_collision
+
+            # x_a, x_b = self.x, r_a_w
+
+    def add_deltas(self):
+        self.x = self.x + (self.dx_collision + self.dx_friction) * self.dt + self.dx_hinge * 0.6
+        self.q = self.q + (self.dq_collision + self.dq_friction) * self.dt + self.dq_hinge * 0.6
+
+        self.q = normalize_quat(self.q)
+
+        self.dx_collision = torch.zeros(3)
+        self.dq_collision = torch.zeros(4)
+        self.dx_friction = torch.zeros(3)
+        self.dq_friction = torch.zeros(4)
+        self.dx_hinge = torch.zeros(3)
+        self.dq_hinge = torch.zeros(4)
+
     def correct_collisions(self):
         delta_x_collision = torch.zeros(3)
         delta_q_collision = torch.zeros(4)
@@ -184,9 +230,8 @@ class Body:
         delta_q_friction = torch.zeros(4)
         num_corrections = 0
 
-        for r, n in zip(self.collisions, self.coll_normals):
-            if torch.isnan(r).all():
-                continue
+        for collision in self.collisions:
+            r, n = collision.point, collision.normal
 
             # Get the depth of the collision (correction magnitude)
             p_a = rotate_vector(r, self.q) + self.x
@@ -230,19 +275,22 @@ class Body:
         self.q = self.q / torch.norm(self.q)  # normalize quaternion
 
     def update_velocity(self):
+        assert torch.norm(self.q) - 1.0 < 1e-6
         self.v = (self.x - self.x_prev) / self.dt
         self.w = numerical_angular_velocity(self.q, self.q_prev, self.dt)
 
     def solve_velocity(self):
+        assert torch.norm(self.q) - 1.0 < 1e-6
         delta_v_restitution = torch.zeros(3)
         delta_w_restitution = torch.zeros(3)
         delta_v_friction = torch.zeros(3)
         delta_w_friction = torch.zeros(3)
         num_corrections = 0
 
-        for r, n in zip(self.collisions, self.coll_normals):
-            if torch.isnan(r).all():
-                continue
+        # self.vector_history[self.step].append(LocalVector(self.w, self.x, self.q))
+
+        for collision in self.collisions:
+            r, n = collision.point, collision.normal
 
             dv, dw = restitution_delta(self.q, self.v, self.w, self.v_prev, self.w_prev, r, n, self.m_inv, self.I_inv,
                                        self.restitution)
@@ -251,6 +299,9 @@ class Body:
 
             dv, dw = dynamic_friction_delta(self.q, self.v, self.w, r, n, self.m_inv, self.I_inv, self.dt,
                                             self.dynamic_friction, self.lambda_n)
+            # self.vector_history[self.step].append(LocalVector(r, self.x, self.q))
+            # self.vector_history[self.step].append(LocalVector(dv / self.m_inv, rotate_vector(r, self.q) + self.x, self.q))
+            # self.vector_history[self.step].append(LocalVector(dw, rotate_vector(r, self.q) + self.x, self.q))
             delta_v_friction += dv
             delta_w_friction += dw
 
@@ -262,5 +313,21 @@ class Body:
         self.v += (delta_v_restitution + delta_v_friction) / num_corrections
         self.w += (delta_w_restitution + delta_w_friction) / num_corrections
 
+        # print(f"W: {self.w}, Delta W friction: {delta_w_friction}")
+
         self.lambda_n = torch.tensor([0.0])
         self.lambda_t = torch.tensor([0.0])
+        
+    def simulate(self, n_steps: int, time: float):
+        sim_time = torch.linspace(0, time, n_steps)
+
+        self.dt = time / n_steps
+        self.trajectory = Trajectory(sim_time)
+        for i in range(n_steps):
+            self.step = i
+            self.integrate()
+            self.detect_collisions()
+            self.correct_collisions()
+            self.update_velocity()
+            self.solve_velocity()
+            self.save_state(i)

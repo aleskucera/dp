@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 from xpbd_pytorch.body import Body
 from xpbd_pytorch.quat import rotate_vector
-from xpbd_pytorch.animate import AnimationController
+from xpbd_pytorch.animation import AnimationController
 
 TOP_COLOR = (1.0, 0.4980392156862745, 0.054901960784313725)
 BOTTOM_COLOR = (0.17254901960784313, 0.6274509803921569, 0.17254901960784313)
@@ -13,8 +13,6 @@ SURFACE_COLOR = (0.12156862745098039, 0.4666666666666667, 0.7058823529411765)
 
 class Cuboid(Body):
     def __init__(self,
-                 dt: float,
-                 sim_time: torch.Tensor,
                  x: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]),
                  q: torch.Tensor = torch.tensor([1.0, 0.0, 0.0, 0.0]),
                  v: torch.Tensor = torch.tensor([0.0, 0.0, 0.0]),
@@ -33,7 +31,7 @@ class Cuboid(Body):
         self.hz = hz
         self.n_collision_points = n_collision_points
 
-        super().__init__(x=x, q=q, v=v, w=w, dt=dt, sim_time=sim_time,
+        super().__init__(x=x, q=q, v=v, w=w,
                          m=m, I=I, restitution=restitution,
                          static_friction=static_friction,
                          dynamic_friction=dynamic_friction)
@@ -135,9 +133,7 @@ def visualize_collision_model():
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    cuboid = Cuboid(dt=0.0,
-                    sim_time=torch.tensor([0.0]),
-                    hx=0.5,
+    cuboid = Cuboid(hx=0.5,
                     hy=0.5,
                     hz=0.5,
                     n_collision_points=n_points)
@@ -167,9 +163,7 @@ def simulate_fall():
 
     num_pos_iters = 2
 
-    cuboid = Cuboid(dt=dt,
-                    sim_time=time,
-                    x=torch.tensor([0.0, 0.0, 3.0]),
+    cuboid = Cuboid(x=torch.tensor([0.0, 0.0, 3.0]),
                     q=torch.tensor([1.0, 0.0, 0.0, 0.0]),
                     v=torch.tensor([0.0, 0.0, 0.0]),
                     w=torch.tensor([0.0, 1.0, 1.0]),
@@ -179,15 +173,17 @@ def simulate_fall():
                     m=1.0,
                     n_collision_points=32)
 
-    for i in range(n_frames):
-        cuboid.integrate()
-        cuboid.detect_collisions()
-        for j in range(num_pos_iters):
-            cuboid.correct_collisions()
-        cuboid.update_velocity()
-        cuboid.solve_velocity()
-        cuboid.save_state(i)
-        cuboid.save_collisions(i)
+    cuboid.simulate(n_frames, time_len)
+
+    # for i in range(n_frames):
+    #     cuboid.integrate()
+    #     cuboid.detect_collisions()
+    #     for j in range(num_pos_iters):
+    #         cuboid.correct_collisions()
+    #     cuboid.update_velocity()
+    #     cuboid.solve_velocity()
+    #     cuboid.save_state(i)
+    #     cuboid.save_collisions(i)
 
     controller = AnimationController(bodies=[cuboid],
                                      time=time,
@@ -204,9 +200,7 @@ def simulate_rotation():
 
     num_pos_iters = 2
 
-    cuboid = Cuboid(dt=dt,
-                    sim_time=time,
-                    x=torch.tensor([0.0, 0.0, 1.1]),
+    cuboid = Cuboid(x=torch.tensor([0.0, 0.0, 1.1]),
                     q=torch.tensor([1.0, 0.0, 0.0, 0.0]),
                     v=torch.tensor([0.0, 0.0, 0.0]),
                     w=torch.tensor([0.0, 0.0, 3.0]),
@@ -216,15 +210,17 @@ def simulate_rotation():
                     m=1.0,
                     n_collision_points=32)
 
-    for i in range(n_frames):
-        cuboid.integrate()
-        cuboid.detect_collisions()
-        for j in range(num_pos_iters):
-            cuboid.correct_collisions()
-        cuboid.update_velocity()
-        cuboid.solve_velocity()
-        cuboid.save_state(i)
-        cuboid.save_collisions(i)
+    cuboid.simulate(n_frames, time_len)
+
+    # for i in range(n_frames):
+    #     cuboid.integrate()
+    #     cuboid.detect_collisions()
+    #     for j in range(num_pos_iters):
+    #         cuboid.correct_collisions()
+    #     cuboid.update_velocity()
+    #     cuboid.solve_velocity()
+    #     cuboid.save_state(i)
+    #     cuboid.save_collisions(i)
 
     controller = AnimationController(bodies=[cuboid],
                                      time=time,

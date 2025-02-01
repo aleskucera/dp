@@ -3,8 +3,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 import pytest
 
-
-def quaternion_multiply(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
+def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
     """
     Multiply two quaternions.
     q = [w, x, y, z]
@@ -20,7 +19,7 @@ def quaternion_multiply(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
     return torch.stack([w, x, y, z], dim=-1).type(q1.dtype)
 
 
-def quaternion_conjugate(q: torch.Tensor) -> torch.Tensor:
+def quat_inv(q: torch.Tensor) -> torch.Tensor:
     """
     Compute the conjugate of a quaternion.
     q = [w, x, y, z] -> q* = [w, -x, -y, -z]
@@ -34,9 +33,9 @@ def rotate_vector(v: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
     v_rotated = q * v * q*
     """
     v_quat = torch.cat([torch.zeros_like(v[..., :1]), v], dim=-1)
-    temp = quaternion_multiply(q, v_quat)
-    q_conj = quaternion_conjugate(q)
-    rotated = quaternion_multiply(temp, q_conj)
+    temp = quat_mul(q, v_quat)
+    q_conj = quat_inv(q)
+    rotated = quat_mul(temp, q_conj)
     return rotated[..., 1:].type(v.dtype)
 
 def rotate_vector_inverse(v: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
@@ -45,12 +44,12 @@ def rotate_vector_inverse(v: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
     v_rotated = q* * v * q
     """
     v_quat = torch.cat([torch.zeros_like(v[..., :1]), v], dim=-1)
-    q_inv = quaternion_conjugate(q)
-    temp = quaternion_multiply(q_inv, v_quat)
-    rotated = quaternion_multiply(temp, q)
+    q_inv = quat_inv(q)
+    temp = quat_mul(q_inv, v_quat)
+    rotated = quat_mul(temp, q)
     return rotated[..., 1:].type(v.dtype)
 
-def rotation_vector_to_quaternion(rotation_vector: torch.Tensor) -> torch.Tensor:
+def rotvec_to_quat(rotation_vector: torch.Tensor) -> torch.Tensor:
     """
     Convert rotation vector to quaternion.
     rotation_vector = angle * axis, where axis is normalized.
@@ -88,7 +87,7 @@ def rotation_vector_to_quaternion(rotation_vector: torch.Tensor) -> torch.Tensor
     return quat.type(rotation_vector.dtype)
 
 
-def quaternion_to_rotation_vector(quaternion: torch.Tensor) -> torch.Tensor:
+def quat_to_rotvec(quaternion: torch.Tensor) -> torch.Tensor:
     """
     Convert quaternion to rotation vector.
     quaternion = [w, x, y, z]
@@ -127,9 +126,20 @@ def quaternion_to_rotation_vector(quaternion: torch.Tensor) -> torch.Tensor:
 
 
 def numerical_angular_velocity(q: torch.Tensor, q_prev: torch.Tensor, dt: float):
-    q_prev_inv = quaternion_conjugate(q_prev)
-    q_rel = quaternion_multiply(q, q_prev_inv)
+    q_prev_inv = quat_inv(q_prev)
+    q_rel = quat_mul(q, q_prev_inv)
     omega = 2 * torch.tensor([q_rel[1], q_rel[2], q_rel[3]]) / dt
     if q_rel[0] < 0:
         omega = -omega
     return omega
+
+def relative_rotation(q: torch.Tensor, q_init: torch.Tensor):
+    q_rel = quat_mul(quat_inv(q_init), q)
+    return q_rel
+
+def delta_q_fixed(q_a: torch.Tensor, q_b: torch.Tensor):
+    dq = quat_mul(q_a, quat_inv(q_b))
+    return dq
+
+def normalize_quat(q: torch.Tensor):
+    return q / torch.norm(q)

@@ -13,6 +13,9 @@ from omegaconf import DictConfig, OmegaConf
 from sim import *
 from dp_utils import *
 
+import matplotlib
+matplotlib.use("TkAgg")
+
 
 USD_FILE = "data/output/pendulum_warp.usd"
 PLOT2D_FILE = "data/output/pendulum_warp_2d.mp4"

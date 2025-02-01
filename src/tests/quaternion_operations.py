@@ -1,42 +1,27 @@
 import torch
+import pytest
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-import pytest
-from xpbd_pytorch.quat import (
-    quaternion_multiply,
-    quaternion_conjugate,
-    rotate_vector,
-    rotate_vector_inverse,
-)
 
+from xpbd_pytorch.quat import *
+from xpbd_pytorch.constants import *
 
-@pytest.fixture
-def identity_quaternion():
-    return torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)
-
-
-@pytest.fixture
-def test_vector():
-    return torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
 
 class TestQuaternionMultiplication:
     @pytest.mark.parametrize(
         "q1, q2, expected",
         [
-            (torch.tensor([1.0, 0.0, 0.0, 0.0]), torch.tensor([0.0, 1.0, 0.0, 0.0]), torch.tensor([0.0, 1.0, 0.0, 0.0])),
-            (torch.tensor([0.0, 1.0, 0.0, 0.0]), torch.tensor([1.0, 0.0, 0.0, 0.0]), torch.tensor([0.0, 1.0, 0.0, 0.0])),
+            (ROT_IDENTITY, torch.tensor([0.0, 1.0, 0.0, 0.0]), torch.tensor([0.0, 1.0, 0.0, 0.0])),
+            (torch.tensor([0.0, 1.0, 0.0, 0.0]), ROT_IDENTITY, torch.tensor([0.0, 1.0, 0.0, 0.0])),
         ],
     )
     def test_identity_multiplication(self, q1, q2, expected):
-        result = quaternion_multiply(q1, q2)
+        result = quat_mul(q1, q2)
         assert torch.allclose(result, expected), f"Expected {expected}, got {result}"
 
-
     def test_consecutive_rotations(self):
-        q_90z = torch.tensor([np.cos(np.pi / 4), 0.0, 0.0, np.sin(np.pi / 4)], dtype=torch.float32)
-        q_180z = quaternion_multiply(q_90z, q_90z)
-        expected_180z = torch.tensor([np.cos(np.pi / 2), 0.0, 0.0, np.sin(np.pi / 2)], dtype=torch.float32)
-        assert torch.allclose(q_180z, expected_180z, atol=1e-6), "90-degree rotation composition failed"
+        q_180z = quat_mul(ROT_90_Z, ROT_90_Z)
+        assert torch.allclose(q_180z, ROT_180_Z, atol=1e-6), "90-degree rotation composition failed"
 
     def test_compare_with_scipy(self):
         q1 = torch.tensor([0.7071, 0.1421, 0.7421, 0.0], dtype=torch.float32)
@@ -47,7 +32,7 @@ class TestQuaternionMultiplication:
         q2_scipy = R.from_quat([q2[1].item(), q2[2].item(), q2[3].item(), q2[0].item()])
         expected = torch.from_numpy((q1_scipy * q2_scipy).as_quat()).type(q1.dtype)
         expected = torch.tensor([expected[3], expected[0], expected[1], expected[2]])
-        result = quaternion_multiply(q1, q2)
+        result = quat_mul(q1, q2)
         assert torch.allclose(result, expected, atol=1e-6), "Scipy comparison failed"
 
 class TestVectorRotation:
@@ -55,8 +40,8 @@ class TestVectorRotation:
         "vector, quaternion, expected",
         [
             (
-                torch.tensor([1.0, 0.0, 0.0], ),
-                torch.tensor([np.cos(np.pi / 4), 0.0, 0.0, np.sin(np.pi / 4)]),
+                torch.tensor([1.0, 0.0, 0.0]),
+                ROT_90_Z,
                 torch.tensor([0.0, 1.0, 0.0]),
             ),
 
@@ -104,7 +89,7 @@ class TestRotateVectorInverse:
         v = torch.tensor([1.0, 0.0, 0.0])
 
         # 90-degree rotation around Z-axis
-        q = torch.tensor([np.cos(np.pi / 4), 0.0, 0.0, np.sin(np.pi / 4)], dtype=torch.float32)
+        q = ROT_90_Z
         
         rotated = rotate_vector(v, q)
         inverted = rotate_vector_inverse(rotated, q)
@@ -188,7 +173,7 @@ class TestQuaternionConjugate:
         """Test quaternion conjugate for a single quaternion."""
         q = torch.tensor([1.0, 2.0, 3.0, 4.0])
         expected = torch.tensor([1.0, -2.0, -3.0, -4.0])
-        result = quaternion_conjugate(q)
+        result = quat_inv(q)
         assert torch.allclose(result, expected, atol=1e-6)
 
     def test_compare_with_scipy(self):
@@ -205,7 +190,7 @@ class TestQuaternionConjugate:
                                 dtype=torch.float32)
 
         # Function result
-        result = quaternion_conjugate(q)
+        result = quat_inv(q)
         assert torch.allclose(result, expected, atol=1e-4)
 
     def test_batch_conjugate(self):
@@ -222,13 +207,13 @@ class TestQuaternionConjugate:
             [0.0, -0.0, -1.0, -0.0],
             [0.0, -0.0, -0.0, -1.0]
         ])
-        result = quaternion_conjugate(q_batch)
+        result = quat_inv(q_batch)
         assert torch.allclose(result, expected, atol=1e-6)
 
     def test_large_batch_with_random_values(self):
         """Test quaternion conjugate for a large batch of random quaternions."""
         q_batch = torch.randn(1000, 4)
-        result = quaternion_conjugate(q_batch)
+        result = quat_inv(q_batch)
         expected = torch.cat([q_batch[..., :1], -q_batch[..., 1:]], dim=-1)
         assert torch.allclose(result, expected, atol=1e-6)
 
@@ -236,5 +221,5 @@ class TestQuaternionConjugate:
         """Test quaternion conjugate with a zero quaternion."""
         q = torch.tensor([0.0, 0.0, 0.0, 0.0], dtype=torch.float32)
         expected = torch.tensor([0.0, -0.0, -0.0, -0.0], dtype=torch.float32)
-        result = quaternion_conjugate(q)
+        result = quat_inv(q)
         assert torch.allclose(result, expected, atol=1e-6)
